@@ -1,12 +1,10 @@
+import AutoSizer from 'react-virtualized-auto-sizer';
+import type { HTMLAttributes } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DataWithScrollModifier,
-  ScrollModifier,
-  VirtuosoMessageList,
-  VirtuosoMessageListLicense,
-  VirtuosoMessageListMethods,
-  VirtuosoMessageListProps,
-} from '@virtuoso.dev/message-list';
-import { useEffect, useMemo, useRef, useState } from 'react';
+  VariableSizeList,
+  ListChildComponentProps,
+} from 'react-window';
 
 import DisplayConversationEntry from '../NormalizedConversation/DisplayConversationEntry';
 import { useEntries } from '@/contexts/EntriesContext';
@@ -30,25 +28,14 @@ interface MessageListContext {
   task?: TaskWithAttemptStatus;
 }
 
-const INITIAL_TOP_ITEM = { index: 'LAST' as const, align: 'end' as const };
+const ESTIMATED_ROW_HEIGHT = 72;
 
-const InitialDataScrollModifier: ScrollModifier = {
-  type: 'item-location',
-  location: INITIAL_TOP_ITEM,
-  purgeItemSizes: true,
-};
-
-const AutoScrollToBottom: ScrollModifier = {
-  type: 'auto-scroll-to-bottom',
-  autoScroll: 'smooth',
-};
-
-const ItemContent: VirtuosoMessageListProps<
-  PatchTypeWithKey,
-  MessageListContext
->['ItemContent'] = ({ data, context }) => {
-  const attempt = context?.attempt;
-  const task = context?.task;
+const renderItemContent = (
+  data: PatchTypeWithKey,
+  context: MessageListContext
+) => {
+  const attempt = context.attempt;
+  const task = context.task;
 
   if (data.type === 'STDOUT') {
     return <p>{data.content}</p>;
@@ -56,7 +43,7 @@ const ItemContent: VirtuosoMessageListProps<
   if (data.type === 'STDERR') {
     return <p>{data.content}</p>;
   }
-  if (data.type === 'NORMALIZED_ENTRY' && attempt) {
+  if (data.type === 'NORMALIZED_ENTRY') {
     return (
       <DisplayConversationEntry
         expansionKey={data.patchKey}
@@ -71,16 +58,61 @@ const ItemContent: VirtuosoMessageListProps<
   return null;
 };
 
-const computeItemKey: VirtuosoMessageListProps<
-  PatchTypeWithKey,
-  MessageListContext
->['computeItemKey'] = ({ data }) => `l-${data.patchKey}`;
+const InnerElement = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
+  ({ style, ...rest }, ref) => (
+    <div
+      ref={ref}
+      style={{ ...style, paddingTop: 8, paddingBottom: 8 }}
+      {...rest}
+    />
+  )
+);
+InnerElement.displayName = 'VirtualizedListInner';
+
+interface RowData {
+  items: PatchTypeWithKey[];
+  context: MessageListContext;
+  setSize: (index: number, size: number) => void;
+}
+
+const Row = ({ index, style, data }: ListChildComponentProps<RowData>) => {
+  const item = data.items[index];
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!rowRef.current) return;
+    const node = rowRef.current;
+
+    const updateSize = () => {
+      const next = node.getBoundingClientRect().height;
+      data.setSize(index, next);
+    };
+
+    updateSize();
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [data, index, item]);
+
+  return (
+    <div style={{ ...style, width: '100%' }}>
+      <div ref={rowRef} className="px-4">
+        {renderItemContent(item, data.context)}
+      </div>
+    </div>
+  );
+};
 
 const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
-  const [channelData, setChannelData] =
-    useState<DataWithScrollModifier<PatchTypeWithKey> | null>(null);
+  const [channelData, setChannelData] = useState<PatchTypeWithKey[] | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const { setEntries, reset } = useEntries();
+  const listRef = useRef<VariableSizeList>(null);
+  const sizeMapRef = useRef<Record<number, number>>({});
+  const scrollToBottomRef = useRef(false);
 
   useEffect(() => {
     setLoading(true);
@@ -90,16 +122,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   const onEntriesUpdated = (
     newEntries: PatchTypeWithKey[],
-    addType: AddEntryType,
+    _addType: AddEntryType,
     newLoading: boolean
   ) => {
-    let scrollModifier: ScrollModifier = InitialDataScrollModifier;
+    scrollToBottomRef.current = true;
 
-    if (addType === 'running' && !loading) {
-      scrollModifier = AutoScrollToBottom;
-    }
-
-    setChannelData({ data: newEntries, scrollModifier });
+    setChannelData(newEntries);
     setEntries(newEntries);
 
     if (loading) {
@@ -109,29 +137,59 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   useConversationHistory({ attempt, onEntriesUpdated });
 
-  const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
   const messageListContext = useMemo(
     () => ({ attempt, task }),
     [attempt, task]
   );
+  const items = channelData ?? [];
+
+  useEffect(() => {
+    sizeMapRef.current = {};
+    listRef.current?.resetAfterIndex(0, true);
+  }, [attempt.id]);
+
+  useEffect(() => {
+    if (!items.length) return;
+    if (scrollToBottomRef.current) {
+      listRef.current?.scrollToItem(items.length - 1, 'end');
+      scrollToBottomRef.current = false;
+    }
+  }, [items.length]);
+
+  const setSize = (index: number, size: number) => {
+    const current = sizeMapRef.current[index];
+    if (current === size) return;
+    sizeMapRef.current[index] = size;
+    listRef.current?.resetAfterIndex(index);
+  };
+
+  const getItemSize = (index: number) =>
+    sizeMapRef.current[index] ?? ESTIMATED_ROW_HEIGHT;
 
   return (
     <ApprovalFormProvider>
-      <VirtuosoMessageListLicense
-        licenseKey={import.meta.env.VITE_PUBLIC_REACT_VIRTUOSO_LICENSE_KEY}
-      >
-        <VirtuosoMessageList<PatchTypeWithKey, MessageListContext>
-          ref={messageListRef}
-          className="flex-1"
-          data={channelData}
-          initialLocation={INITIAL_TOP_ITEM}
-          context={messageListContext}
-          computeItemKey={computeItemKey}
-          ItemContent={ItemContent}
-          Header={() => <div className="h-2"></div>}
-          Footer={() => <div className="h-2"></div>}
-        />
-      </VirtuosoMessageListLicense>
+      <div className="flex-1">
+        <AutoSizer>
+          {({ height, width }) => (
+            <VariableSizeList
+              ref={listRef}
+              height={height}
+              width={width}
+              itemCount={items.length}
+              itemSize={getItemSize}
+              estimatedItemSize={ESTIMATED_ROW_HEIGHT}
+              itemData={{
+                items,
+                context: messageListContext,
+                setSize,
+              }}
+              innerElementType={InnerElement}
+            >
+              {Row}
+            </VariableSizeList>
+          )}
+        </AutoSizer>
+      </div>
       {loading && (
         <div className="float-left top-0 left-0 w-full h-full bg-primary flex flex-col gap-2 justify-center items-center">
           <Loader2 className="h-8 w-8 animate-spin" />

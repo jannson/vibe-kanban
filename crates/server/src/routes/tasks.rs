@@ -399,6 +399,11 @@ pub async fn delete_task(
             repositories.len()
         );
 
+        if std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok() {
+            tracing::info!("Skipping workspace cleanup in original repo mode");
+            return;
+        }
+
         for workspace_dir in &workspace_dirs {
             if let Err(e) = WorkspaceManager::cleanup_workspace(workspace_dir, &repositories).await
             {

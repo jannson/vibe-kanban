@@ -81,6 +81,51 @@ pub struct LocalContainerService {
 }
 
 impl LocalContainerService {
+    fn use_original_repos() -> bool {
+        std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok()
+    }
+
+    async fn resolve_original_workspace_dir(
+        &self,
+        repositories: &[Repo],
+    ) -> Result<PathBuf, ContainerError> {
+        let configured = self.config.read().await.workspace_dir.clone();
+        let base_dir = if let Some(dir) = configured {
+            PathBuf::from(dir)
+        } else {
+            let parent = repositories
+                .first()
+                .and_then(|repo| repo.path.parent())
+                .ok_or_else(|| {
+                    ContainerError::Other(anyhow!(
+                        "Unable to determine workspace root; set workspace_dir in config"
+                    ))
+                })?;
+            parent.to_path_buf()
+        };
+
+        if repositories.is_empty() {
+            return Err(ContainerError::Other(anyhow!(
+                "Workspace has no repositories configured"
+            )));
+        }
+
+        let normalize = |path: &Path| std::fs::canonicalize(path).unwrap_or(path.to_path_buf());
+
+        for repo in repositories {
+            let expected = base_dir.join(&repo.name);
+            if normalize(&expected) != normalize(&repo.path) {
+                return Err(ContainerError::Other(anyhow!(
+                    "Repository path mismatch for '{}': expected {}, got {}. Set workspace_dir to the parent directory containing the repo.",
+                    repo.name,
+                    expected.display(),
+                    repo.path.display()
+                )));
+            }
+        }
+
+        Ok(base_dir)
+    }
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         db: DBService,
@@ -151,6 +196,11 @@ impl LocalContainerService {
         let repositories = WorkspaceRepo::find_repos_for_workspace(&db.pool, workspace.id)
             .await
             .unwrap_or_default();
+
+        if LocalContainerService::use_original_repos() {
+            let _ = Workspace::clear_container_ref(&db.pool, workspace.id).await;
+            return;
+        }
 
         if repositories.is_empty() {
             tracing::warn!(
@@ -905,7 +955,6 @@ impl ContainerService for LocalContainerService {
 
         let workspace_dir_name =
             LocalContainerService::dir_name_from_workspace(&workspace.id, &task.title);
-        let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
 
         let workspace_repos =
             WorkspaceRepo::find_by_workspace_id(&self.db.pool, workspace.id).await?;
@@ -917,6 +966,46 @@ impl ContainerService for LocalContainerService {
 
         let repositories =
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
+
+        if Self::use_original_repos() {
+            let workspace_dir = self.resolve_original_workspace_dir(&repositories).await?;
+            let target_branches: HashMap<_, _> = workspace_repos
+                .iter()
+                .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+                .collect();
+            let git = GitCli::new();
+
+            for repo in &repositories {
+                let base_branch = target_branches
+                    .get(&repo.id)
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "main".to_string());
+                git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
+                    .map_err(|e| {
+                        ContainerError::Other(anyhow!(
+                            "Failed to checkout task branch in {}: {}",
+                            repo.path.display(),
+                            e
+                        ))
+                    })?;
+            }
+
+            Workspace::update_container_ref(
+                &self.db.pool,
+                workspace.id,
+                &workspace_dir.to_string_lossy(),
+            )
+            .await?;
+
+            // Copy project files and images into the original repos as needed.
+            self.copy_files_and_images(&workspace_dir, workspace)
+                .await?;
+
+            return Ok(workspace_dir.to_string_lossy().to_string());
+        }
+
+        let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
 
         let target_branches: HashMap<_, _> = workspace_repos
             .iter()
@@ -976,6 +1065,47 @@ impl ContainerService for LocalContainerService {
             return Err(ContainerError::Other(anyhow!(
                 "Workspace has no repositories configured"
             )));
+        }
+
+        if Self::use_original_repos() {
+            let workspace_repos =
+                WorkspaceRepo::find_by_workspace_id(&self.db.pool, workspace.id).await?;
+            let target_branches: HashMap<_, _> = workspace_repos
+                .iter()
+                .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+                .collect();
+            let workspace_dir = self.resolve_original_workspace_dir(&repositories).await?;
+            let git = GitCli::new();
+
+            for repo in &repositories {
+                let base_branch = target_branches
+                    .get(&repo.id)
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "main".to_string());
+                git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
+                    .map_err(|e| {
+                        ContainerError::Other(anyhow!(
+                            "Failed to checkout task branch in {}: {}",
+                            repo.path.display(),
+                            e
+                        ))
+                    })?;
+            }
+
+            if workspace.container_ref.is_none() {
+                Workspace::update_container_ref(
+                    &self.db.pool,
+                    workspace.id,
+                    &workspace_dir.to_string_lossy(),
+                )
+                .await?;
+            }
+
+            self.copy_files_and_images(&workspace_dir, workspace)
+                .await?;
+
+            return Ok(workspace_dir.to_string_lossy().to_string());
         }
 
         let workspace_dir = if let Some(container_ref) = &workspace.container_ref {

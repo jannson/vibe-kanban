@@ -107,6 +107,24 @@ impl GitCli {
         Ok(())
     }
 
+    /// Checkout a branch if it exists, otherwise create it from the base branch.
+    pub fn checkout_branch_or_create(
+        &self,
+        repo_path: &Path,
+        branch: &str,
+        base_branch: &str,
+    ) -> Result<(), GitCliError> {
+        self.ensure_available()?;
+        match self.git(repo_path, ["checkout", branch]) {
+            Ok(_) => Ok(()),
+            Err(GitCliError::CommandFailed(_)) => {
+                self.git(repo_path, ["checkout", "-b", branch, base_branch])
+                    .map(|_| ())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Run `git -C <repo> worktree remove <path>`
     pub fn worktree_remove(
         &self,
