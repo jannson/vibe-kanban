@@ -47,6 +47,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
     const [allRepos, setAllRepos] = useState<DirectoryEntry[]>([]);
     const [reposLoading, setReposLoading] = useState(false);
     const [showMoreRepos, setShowMoreRepos] = useState(false);
+    const [hasAutoFetchedRepos, setHasAutoFetchedRepos] = useState(false);
 
     // Stage: new
     const [repoName, setRepoName] = useState('');
@@ -60,6 +61,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         setShowMoreRepos(false);
         setRepoName('');
         setParentPath('');
+        setHasAutoFetchedRepos(false);
       }
     }, [modal.visible]);
 
@@ -78,10 +80,11 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
     }, []);
 
     useEffect(() => {
-      if (stage === 'existing' && allRepos.length === 0 && !reposLoading) {
+      if (stage === 'existing' && !hasAutoFetchedRepos && !reposLoading) {
+        setHasAutoFetchedRepos(true);
         loadRecentRepos();
       }
-    }, [stage, allRepos.length, reposLoading, loadRecentRepos]);
+    }, [stage, hasAutoFetchedRepos, reposLoading, loadRecentRepos]);
 
     const registerAndReturn = async (path: string) => {
       setIsWorking(true);
@@ -266,6 +269,22 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           Show less
                         </button>
                       )}
+                    </div>
+                  )}
+
+                  {!reposLoading && allRepos.length === 0 && !error && (
+                    <div className="p-4 border rounded-lg bg-card space-y-3">
+                      <div className="text-sm text-muted-foreground">
+                        No git repositories found.
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={loadRecentRepos}
+                        disabled={isWorking}
+                      >
+                        Reload
+                      </Button>
                     </div>
                   )}
 
