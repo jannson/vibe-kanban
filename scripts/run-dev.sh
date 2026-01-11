@@ -22,6 +22,16 @@ export CARGO_NET_GIT_FETCH_WITH_CLI=true
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 
-pnpm exec concurrently \
+PNPM_CMD=(pnpm)
+if ! command -v pnpm >/dev/null 2>&1; then
+  if command -v corepack >/dev/null 2>&1; then
+    PNPM_CMD=(corepack pnpm)
+  else
+    echo "pnpm not found and corepack is unavailable." >&2
+    exit 1
+  fi
+fi
+
+"${PNPM_CMD[@]}" exec concurrently \
   "BACKEND_PORT=${BACKEND_PORT} DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug cargo watch -w crates -x 'run --bin server'" \
   "cd frontend && npm run dev -- --port ${FRONTEND_PORT} --host --strictPort"
