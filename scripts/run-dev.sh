@@ -32,6 +32,27 @@ if ! command -v pnpm >/dev/null 2>&1; then
   fi
 fi
 
+# Optional: run checks before starting dev.
+# Defaults to ON; set `SKIP_CHECKS=1` to skip.
+if [ "${SKIP_CHECKS:-0}" != "1" ]; then
+  echo "Running preflight checks (set SKIP_CHECKS=1 to skip)..."
+  "${PNPM_CMD[@]}" run -s check
+fi
+
+# Optional: run lint before starting dev.
+if [ "${RUN_LINT:-0}" = "1" ]; then
+  echo "Running lint (set RUN_LINT=0 to skip)..."
+  "${PNPM_CMD[@]}" run -s lint
+fi
+
+# Optional: run Rust tests before starting dev.
+if [ "${RUN_TESTS:-0}" = "1" ]; then
+  echo "Running Rust tests (set RUN_TESTS=0 to skip)..."
+  cargo test --workspace
+fi
+
+echo "Starting dev servers..."
+
 "${PNPM_CMD[@]}" exec concurrently \
   "BACKEND_PORT=${BACKEND_PORT} DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug cargo watch -w crates -x 'run --bin server'" \
   "cd frontend && npm run dev -- --port ${FRONTEND_PORT} --host --strictPort"
