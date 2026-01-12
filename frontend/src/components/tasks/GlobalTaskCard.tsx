@@ -12,6 +12,7 @@ interface GlobalTaskCardProps {
   index: number;
   status: TaskStatus;
   projectName?: string;
+  dragDisabled?: boolean;
 }
 
 export function GlobalTaskCard({
@@ -19,6 +20,7 @@ export function GlobalTaskCard({
   index,
   status,
   projectName,
+  dragDisabled = false,
 }: GlobalTaskCardProps) {
   const navigate = useNavigateWithSearch();
   const handleClick = useCallback(() => {
@@ -32,6 +34,7 @@ export function GlobalTaskCard({
       index={index}
       parent={status}
       onClick={handleClick}
+      dragDisabled={dragDisabled}
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">

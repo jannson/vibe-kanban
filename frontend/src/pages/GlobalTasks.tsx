@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   KanbanBoard,
   KanbanCards,
@@ -19,26 +18,27 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
+import type { TaskWithAttemptStatus } from 'shared/types';
 import { useProjects } from '@/hooks/useProjects';
 import { useAllTasksStream } from '@/hooks/useAllTasksStream';
-import { tasksApi } from '@/lib/api';
 import { GlobalTaskCard } from '@/components/tasks/GlobalTaskCard';
 
-const GLOBAL_STATUSES = ['inprogress', 'inreview'] as const;
+const GLOBAL_STATUSES = [
+  'todo',
+  'inprogress',
+  'inreview',
+  'done',
+  'cancelled',
+] as const;
 type GlobalStatus = (typeof GLOBAL_STATUSES)[number];
 
-const EMPTY_COLUMNS: Record<GlobalStatus, TaskWithAttemptStatus[]> = {
-  inprogress: [],
-  inreview: [],
-};
+const ARCHIVED_LIMIT = 20;
 
 const headerGradient = (status: GlobalStatus) =>
   `linear-gradient(hsl(var(${statusBoardColors[status]}) / 0.03), hsl(var(${statusBoardColors[status]}) / 0.03))`;
 
 export function GlobalTasks() {
   const { t } = useTranslation(['tasks', 'common']);
-  const queryClient = useQueryClient();
   const {
     projects,
     projectsById,
@@ -48,7 +48,6 @@ export function GlobalTasks() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
   const {
     tasks,
-    tasksById,
     isLoading: isTasksLoading,
     error: tasksError,
   } = useAllTasksStream();
@@ -64,11 +63,13 @@ export function GlobalTasks() {
   }, [selectedProjectId, tasks]);
 
   const columns = useMemo(() => {
-    const map: Record<GlobalStatus, TaskWithAttemptStatus[]> = {
-      ...EMPTY_COLUMNS,
-      inprogress: [],
-      inreview: [],
-    };
+    const map = GLOBAL_STATUSES.reduce(
+      (acc, status) => {
+        acc[status] = [];
+        return acc;
+      },
+      {} as Record<GlobalStatus, TaskWithAttemptStatus[]>
+    );
 
     filteredTasks.forEach((task) => {
       const status = task.status as GlobalStatus;
@@ -81,38 +82,15 @@ export function GlobalTasks() {
         (a, b) =>
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+      if (status === 'done' || status === 'cancelled') {
+        map[status] = map[status].slice(0, ARCHIVED_LIMIT);
+      }
     });
 
     return map;
   }, [filteredTasks]);
 
-  const handleDragEnd = useCallback(
-    async (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || !active.data.current) return;
-
-      const draggedTaskId = active.id as string;
-      const newStatus = over.id as TaskStatus;
-      const task = tasksById[draggedTaskId];
-      if (!task || task.status === newStatus) return;
-
-      try {
-        await tasksApi.update(draggedTaskId, {
-          title: task.title,
-          description: task.description,
-          status: newStatus,
-          parent_workspace_id: task.parent_workspace_id,
-          image_ids: null,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ['tasks', 'project', task.project_id],
-        });
-      } catch (err) {
-        console.error('Failed to update task status:', err);
-      }
-    },
-    [queryClient, tasksById]
-  );
+  const handleDragEnd = useCallback((_event: DragEndEvent) => {}, []);
 
   const error =
     projectsError ??
@@ -146,7 +124,7 @@ export function GlobalTasks() {
         <div>
           <div className="text-sm font-medium">All Tasks</div>
           <div className="text-xs text-muted-foreground">
-            In Progress + In Review
+            To Do, In Progress, In Review, Done, Cancelled
           </div>
         </div>
         <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
@@ -172,7 +150,7 @@ export function GlobalTasks() {
 
       {!hasTasks ? (
         <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-muted-foreground">
-          No tasks in progress or review.
+          No tasks to show.
         </div>
       ) : (
         <div className="w-full h-full overflow-x-auto overflow-y-auto overscroll-x-contain p-4">
@@ -208,6 +186,7 @@ export function GlobalTasks() {
                       index={index}
                       status={status}
                       projectName={projectsById[task.project_id]?.name}
+                      dragDisabled={true}
                     />
                   ))}
                 </KanbanCards>

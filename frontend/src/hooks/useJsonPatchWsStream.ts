@@ -15,6 +15,10 @@ interface UseJsonPatchStreamOptions<T> {
    * Filter/deduplicate patches before applying them
    */
   deduplicatePatches?: (patches: Operation[]) => Operation[];
+  /**
+   * Reset data to initial state when a new connection opens
+   */
+  resetOnConnect?: boolean;
 }
 
 interface UseJsonPatchStreamResult<T> {
@@ -45,6 +49,7 @@ export const useJsonPatchWsStream = <T extends object>(
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
+  const resetOnConnect = options?.resetOnConnect ?? false;
 
   function scheduleReconnect() {
     if (retryTimerRef.current) return; // already scheduled
@@ -110,6 +115,12 @@ export const useJsonPatchWsStream = <T extends object>(
       ws.onopen = () => {
         setError(null);
         setIsConnected(true);
+        if (resetOnConnect) {
+          dataRef.current = initialData();
+          if (injectInitialEntry) {
+            injectInitialEntry(dataRef.current);
+          }
+        }
         if (dataRef.current) {
           setData((prev) => prev ?? dataRef.current);
         }

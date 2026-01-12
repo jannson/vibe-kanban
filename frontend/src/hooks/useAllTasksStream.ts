@@ -22,10 +22,24 @@ export const useAllTasksStream = (): UseAllTasksStreamResult => {
   const { data, isConnected, error } = useJsonPatchWsStream(
     endpoint,
     true,
-    initialData
+    initialData,
+    { resetOnConnect: true }
   );
 
-  const localTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+  const localTasksById = useMemo(() => {
+    const tasks = data?.tasks;
+    if (!tasks) return {};
+    if (Array.isArray(tasks)) {
+      const map: Record<string, TaskWithAttemptStatus> = {};
+      tasks.forEach((task) => {
+        if (task?.id) {
+          map[task.id] = task;
+        }
+      });
+      return map;
+    }
+    return tasks;
+  }, [data?.tasks]);
 
   const { tasks, tasksById, tasksByStatus } = useMemo(() => {
     const merged: Record<string, TaskWithAttemptStatus> = { ...localTasksById };
