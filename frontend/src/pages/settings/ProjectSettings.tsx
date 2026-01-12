@@ -309,14 +309,15 @@ export function ProjectSettings() {
   const handleAddRepository = async () => {
     if (!selectedProjectId) return;
 
-    const repo = await RepoPickerDialog.show({
+    const result = await RepoPickerDialog.show({
       title: 'Select Git Repository',
       description: 'Choose a git repository to add to this project',
+      workspaceRoot: selectedProject?.workspace_root || undefined,
     });
 
-    if (!repo) return;
+    if (!result) return;
 
-    if (repositories.some((r) => r.id === repo.id)) {
+    if (repositories.some((r) => r.id === result.repo.id)) {
       return;
     }
 
@@ -324,8 +325,8 @@ export function ProjectSettings() {
     setRepoError(null);
     try {
       const newRepo = await projectsApi.addRepository(selectedProjectId, {
-        display_name: repo.display_name,
-        git_repo_path: repo.path,
+        display_name: result.repo.display_name,
+        git_repo_path: result.repo.path,
       });
       setRepositories((prev) => [...prev, newRepo]);
       queryClient.invalidateQueries({

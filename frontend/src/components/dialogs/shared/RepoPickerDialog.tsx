@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,39 +15,62 @@ import {
   ArrowLeft,
   Folder,
   FolderGit,
-  FolderPlus,
   Loader2,
-  Search,
+  RefreshCcw,
 } from 'lucide-react';
 import { fileSystemApi, repoApi } from '@/lib/api';
 import { DirectoryEntry, Repo } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import { FolderPickerDialog } from './FolderPickerDialog';
+import { useUserSystem } from '@/components/ConfigProvider';
 
 export interface RepoPickerDialogProps {
   value?: string;
   title?: string;
   description?: string;
+  workspaceRoot?: string;
 }
 
-type Stage = 'options' | 'existing' | 'new';
+export interface RepoPickerResult {
+  repo: Repo;
+  workspaceRoot: string;
+}
+
+type Stage = 'root' | 'existing' | 'new';
 
 const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
   ({
     title = 'Select Repository',
     description = 'Choose or create a git repository',
+    workspaceRoot: workspaceRootProp,
   }) => {
     const modal = useModal();
-    const [stage, setStage] = useState<Stage>('options');
+    const { config, updateAndSaveConfig } = useUserSystem();
+    const [stage, setStage] = useState<Stage>('existing');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
+
+    const configRoots = useMemo(
+      () => config?.workspace_roots ?? [],
+      [config?.workspace_roots]
+    );
+    const defaultRoot = useMemo(
+      () =>
+        workspaceRootProp ||
+        config?.default_workspace_root ||
+        '',
+      [config?.default_workspace_root, workspaceRootProp]
+    );
+    const [workspaceRoots, setWorkspaceRoots] = useState<string[]>(configRoots);
+    const [workspaceRoot, setWorkspaceRoot] = useState(defaultRoot);
 
     // Stage: existing
     const [allRepos, setAllRepos] = useState<DirectoryEntry[]>([]);
     const [reposLoading, setReposLoading] = useState(false);
     const [showMoreRepos, setShowMoreRepos] = useState(false);
     const [hasAutoFetchedRepos, setHasAutoFetchedRepos] = useState(false);
+    const [repoFilter, setRepoFilter] = useState('');
 
     // Stage: new
     const [repoName, setRepoName] = useState('');
@@ -55,21 +78,32 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
 
     useEffect(() => {
       if (modal.visible) {
-        setStage('options');
+        setStage(defaultRoot ? 'existing' : 'root');
         setError('');
         setAllRepos([]);
         setShowMoreRepos(false);
+        setRepoFilter('');
         setRepoName('');
-        setParentPath('');
+        setParentPath(defaultRoot);
         setHasAutoFetchedRepos(false);
+        setWorkspaceRoots(configRoots);
+        setWorkspaceRoot(defaultRoot);
       }
-    }, [modal.visible]);
+    }, [modal.visible, configRoots, defaultRoot]);
+
+    useEffect(() => {
+      setParentPath(workspaceRoot);
+    }, [workspaceRoot]);
 
     const loadRecentRepos = useCallback(async () => {
+      if (!workspaceRoot) {
+        setError('Workspace root is required');
+        return;
+      }
       setReposLoading(true);
       setError('');
       try {
-        const repos = await fileSystemApi.listGitRepos();
+        const repos = await fileSystemApi.listGitRepos(workspaceRoot, 1);
         setAllRepos(repos);
       } catch (err) {
         setError('Failed to load repositories');
@@ -77,21 +111,29 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
       } finally {
         setReposLoading(false);
       }
-    }, []);
+    }, [workspaceRoot]);
 
     useEffect(() => {
-      if (stage === 'existing' && !hasAutoFetchedRepos && !reposLoading) {
-        setHasAutoFetchedRepos(true);
-        loadRecentRepos();
+      if (stage !== 'existing' || hasAutoFetchedRepos || reposLoading) {
+        return;
       }
-    }, [stage, hasAutoFetchedRepos, reposLoading, loadRecentRepos]);
+      if (!workspaceRoot) {
+        return;
+      }
+      setHasAutoFetchedRepos(true);
+      loadRecentRepos();
+    }, [stage, hasAutoFetchedRepos, reposLoading, loadRecentRepos, workspaceRoot]);
 
     const registerAndReturn = async (path: string) => {
+      if (!workspaceRoot) {
+        setError('Workspace root is required');
+        return;
+      }
       setIsWorking(true);
       setError('');
       try {
         const repo = await repoApi.register({ path });
-        modal.resolve(repo);
+        modal.resolve({ repo, workspaceRoot });
         modal.hide();
       } catch (err) {
         setError(
@@ -106,20 +148,13 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
       registerAndReturn(repo.path);
     };
 
-    const handleBrowseForRepo = async () => {
-      setError('');
-      const selectedPath = await FolderPickerDialog.show({
-        title: 'Select Git Repository',
-        description: 'Choose an existing git repository',
-      });
-      if (selectedPath) {
-        registerAndReturn(selectedPath);
-      }
-    };
-
     const handleCreateRepo = async () => {
       if (!repoName.trim()) {
         setError('Repository name is required');
+        return;
+      }
+      if (!workspaceRoot) {
+        setError('Workspace root is required');
         return;
       }
 
@@ -127,10 +162,10 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
       setError('');
       try {
         const repo = await repoApi.init({
-          parent_path: parentPath.trim() || '.',
+          parent_path: workspaceRoot,
           folder_name: repoName.trim(),
         });
-        modal.resolve(repo);
+        modal.resolve({ repo, workspaceRoot });
         modal.hide();
       } catch (err) {
         setError(
@@ -153,9 +188,48 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
     };
 
     const goBack = () => {
-      setStage('options');
+      setStage('existing');
       setError('');
     };
+
+    const handleSelectWorkspaceRoot = async () => {
+      const selectedPath = await FolderPickerDialog.show({
+        title: 'Select Workspace Root',
+        description: 'Choose a root folder that contains your repositories',
+        value: workspaceRoot || undefined,
+      });
+      if (!selectedPath) return;
+
+      const nextRoots = Array.from(
+        new Set([...(workspaceRoots || []), selectedPath])
+      );
+      const nextDefault = selectedPath;
+      const saved = await updateAndSaveConfig({
+        workspace_roots: nextRoots,
+        default_workspace_root: nextDefault,
+      });
+      if (!saved) {
+        setError('Failed to save workspace root');
+        return;
+      }
+      setWorkspaceRoots(nextRoots);
+      setWorkspaceRoot(selectedPath);
+      setStage('existing');
+      setAllRepos([]);
+      setHasAutoFetchedRepos(false);
+      setShowMoreRepos(false);
+      setRepoFilter('');
+    };
+
+    const filteredRepos = useMemo(() => {
+      const query = repoFilter.trim().toLowerCase();
+      if (!query) return allRepos;
+      return allRepos.filter((repo) => {
+        const name = repo.name.toLowerCase();
+        const path = repo.path.toLowerCase();
+        return name.includes(query) || path.includes(query);
+      });
+    }, [allRepos, repoFilter]);
 
     return (
       <div className="fixed inset-0 z-[10000] pointer-events-none [&>*]:pointer-events-auto">
@@ -163,60 +237,73 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
           <DialogContent className="max-w-[500px] w-full">
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
-              <DialogDescription>{description}</DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
-              {/* Stage: Options */}
-              {stage === 'options' && (
-                <>
-                  <div
-                    className="p-4 border cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
-                    onClick={() => setStage('existing')}
+              {stage === 'root' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    A workspace root is required. Select a folder that contains
+                    your repositories.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleSelectWorkspaceRoot}
+                    disabled={isWorking}
+                    className="w-full"
                   >
-                    <div className="flex items-start gap-3">
-                      <FolderGit className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-foreground">
-                          From Git Repository
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          Select an existing repository from your system
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="p-4 border cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
-                    onClick={() => setStage('new')}
-                  >
-                    <div className="flex items-start gap-3">
-                      <FolderPlus className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-foreground">
-                          Create New Repository
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          Initialize a new git repository
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </>
+                    Select Workspace Root
+                  </Button>
+                </div>
               )}
 
               {/* Stage: Existing */}
               {stage === 'existing' && (
                 <>
-                  <button
-                    className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
-                    onClick={goBack}
-                    disabled={isWorking}
-                  >
-                    <ArrowLeft className="h-3 w-3" />
-                    Back to options
-                  </button>
+                  <div className="space-y-2">
+                    <Label>Workspace Root</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={workspaceRoot || ''}
+                        readOnly
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSelectWorkspaceRoot}
+                        disabled={isWorking}
+                      >
+                        <Folder className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="repo-filter">Filter Repositories</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="repo-filter"
+                        value={repoFilter}
+                        onChange={(event) => setRepoFilter(event.target.value)}
+                        placeholder="Search by name or path"
+                        disabled={isWorking || reposLoading}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={loadRecentRepos}
+                        disabled={isWorking || reposLoading || !workspaceRoot}
+                        aria-label="Refresh repositories"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
 
                   {reposLoading && (
                     <div className="p-4 border rounded-lg bg-card">
@@ -229,10 +316,13 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     </div>
                   )}
 
-                  {!reposLoading && allRepos.length > 0 && (
+                  {!reposLoading && filteredRepos.length > 0 && (
                     <div className="space-y-2">
-                      {allRepos
-                        .slice(0, showMoreRepos ? allRepos.length : 3)
+                      {filteredRepos
+                        .slice(
+                          0,
+                          showMoreRepos ? filteredRepos.length : 3
+                        )
                         .map((repo) => (
                           <div
                             key={repo.path}
@@ -253,15 +343,15 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           </div>
                         ))}
 
-                      {!showMoreRepos && allRepos.length > 3 && (
+                      {!showMoreRepos && filteredRepos.length > 3 && (
                         <button
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(true)}
                         >
-                          Show {allRepos.length - 3} more repositories
+                          Show {filteredRepos.length - 3} more repositories
                         </button>
                       )}
-                      {showMoreRepos && allRepos.length > 3 && (
+                      {showMoreRepos && filteredRepos.length > 3 && (
                         <button
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(false)}
@@ -272,37 +362,36 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     </div>
                   )}
 
-                  {!reposLoading && allRepos.length === 0 && !error && (
+                  {!reposLoading && filteredRepos.length === 0 && !error && (
                     <div className="p-4 border rounded-lg bg-card space-y-3">
                       <div className="text-sm text-muted-foreground">
-                        No git repositories found.
+                        {repoFilter
+                          ? 'No repositories match this filter.'
+                          : workspaceRoot
+                            ? 'No git repositories found under this workspace root.'
+                            : 'Select a workspace root to continue.'}
                       </div>
                       <Button
                         type="button"
                         variant="secondary"
                         onClick={loadRecentRepos}
-                        disabled={isWorking}
+                        disabled={isWorking || !workspaceRoot}
                       >
                         Reload
                       </Button>
                     </div>
                   )}
 
-                  <div
-                    className="p-4 border border-dashed cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
-                    onClick={() => !isWorking && handleBrowseForRepo()}
-                  >
-                    <div className="flex items-start gap-3">
-                      <Search className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-foreground">
-                          Browse for repository
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          Browse and select any repository on your system
-                        </div>
-                      </div>
-                    </div>
+                  <div className="pt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setStage('new')}
+                      disabled={isWorking || !workspaceRoot}
+                      className="w-full"
+                    >
+                      Create New Repository
+                    </Button>
                   </div>
                 </>
               )}
@@ -316,7 +405,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     disabled={isWorking}
                   >
                     <ArrowLeft className="h-3 w-3" />
-                    Back to options
+                    Back to repositories
                   </button>
 
                   <div className="space-y-4">
@@ -339,40 +428,29 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
 
                     <div className="space-y-2">
                       <Label htmlFor="parent-path">Parent Directory</Label>
-                      <div className="flex space-x-2">
-                        <Input
-                          id="parent-path"
-                          type="text"
-                          value={parentPath}
-                          onChange={(e) => setParentPath(e.target.value)}
-                          placeholder="Current Directory"
-                          className="flex-1"
-                          disabled={isWorking}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          disabled={isWorking}
-                          onClick={async () => {
-                            const selectedPath = await FolderPickerDialog.show({
-                              title: 'Select Parent Directory',
-                              description:
-                                'Choose where to create the new repository',
-                              value: parentPath,
-                            });
-                            if (selectedPath) {
-                              setParentPath(selectedPath);
-                            }
-                          }}
-                        >
-                          <Folder className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Leave empty to use your current working directory
-                      </p>
+                    <div className="flex space-x-2">
+                      <Input
+                        id="parent-path"
+                        type="text"
+                        value={parentPath}
+                        placeholder="Workspace Root"
+                        className="flex-1"
+                        disabled={true}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={true}
+                      >
+                        <Folder className="h-4 w-4" />
+                      </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      New repositories are created directly under the workspace
+                      root
+                    </p>
+                  </div>
 
                     <Button
                       onClick={handleCreateRepo}
@@ -413,6 +491,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
   }
 );
 
-export const RepoPickerDialog = defineModal<RepoPickerDialogProps, Repo | null>(
-  RepoPickerDialogImpl
-);
+export const RepoPickerDialog = defineModal<
+  RepoPickerDialogProps,
+  RepoPickerResult | null
+>(RepoPickerDialogImpl);

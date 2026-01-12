@@ -29,6 +29,10 @@ pub struct Config {
     pub github: GitHubConfig,
     pub analytics_enabled: bool,
     pub workspace_dir: Option<String>,
+    #[serde(default)]
+    pub workspace_roots: Vec<String>,
+    #[serde(default)]
+    pub default_workspace_root: Option<String>,
     pub last_app_version: Option<String>,
     pub show_release_notes: bool,
     #[serde(default)]
@@ -48,7 +52,7 @@ impl Config {
         // Convert Option<bool> to bool: None or Some(true) become true, Some(false) stays false
         let analytics_enabled = old_config.analytics_enabled.unwrap_or(true);
 
-        Self {
+        let mut config = Self {
             config_version: "v8".to_string(),
             theme: old_config.theme,
             executor_profile: old_config.executor_profile,
@@ -59,6 +63,8 @@ impl Config {
             github: old_config.github,
             analytics_enabled,
             workspace_dir: old_config.workspace_dir,
+            workspace_roots: Vec::new(),
+            default_workspace_root: None,
             last_app_version: old_config.last_app_version,
             show_release_notes: old_config.show_release_notes,
             language: old_config.language,
@@ -66,7 +72,10 @@ impl Config {
             showcases: old_config.showcases,
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
-        }
+        };
+
+        config.normalize_workspace_roots();
+        config
     }
 
     pub fn from_previous_version(raw_config: &str) -> Result<Self, Error> {
@@ -77,9 +86,10 @@ impl Config {
 
 impl From<String> for Config {
     fn from(raw_config: String) -> Self {
-        if let Ok(config) = serde_json::from_str::<Config>(&raw_config)
+        if let Ok(mut config) = serde_json::from_str::<Config>(&raw_config)
             && config.config_version == "v8"
         {
+            config.normalize_workspace_roots();
             return config;
         }
 
@@ -98,7 +108,7 @@ impl From<String> for Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
+        let mut config = Self {
             config_version: "v8".to_string(),
             theme: ThemeMode::System,
             executor_profile: ExecutorProfileId::new(BaseCodingAgent::ClaudeCode),
@@ -109,6 +119,8 @@ impl Default for Config {
             github: GitHubConfig::default(),
             analytics_enabled: true,
             workspace_dir: None,
+            workspace_roots: Vec::new(),
+            default_workspace_root: None,
             last_app_version: None,
             show_release_notes: false,
             language: UiLanguage::default(),
@@ -116,6 +128,32 @@ impl Default for Config {
             showcases: ShowcaseState::default(),
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
+        };
+
+        config.normalize_workspace_roots();
+        config
+    }
+}
+
+impl Config {
+    fn normalize_workspace_roots(&mut self) {
+        if self.workspace_roots.is_empty() {
+            if let Some(ref dir) = self.workspace_dir {
+                self.workspace_roots = vec![dir.clone()];
+            }
+        }
+
+        if self.default_workspace_root.is_none() {
+            self.default_workspace_root = self
+                .workspace_dir
+                .clone()
+                .or_else(|| self.workspace_roots.first().cloned());
+        }
+
+        if let Some(ref default_root) = self.default_workspace_root {
+            if !self.workspace_roots.contains(default_root) {
+                self.workspace_roots.insert(0, default_root.clone());
+            }
         }
     }
 }

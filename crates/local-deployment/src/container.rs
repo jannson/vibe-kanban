@@ -90,19 +90,16 @@ impl LocalContainerService {
         repositories: &[Repo],
     ) -> Result<PathBuf, ContainerError> {
         let configured = self.config.read().await.workspace_dir.clone();
-        let base_dir = if let Some(dir) = configured {
-            PathBuf::from(dir)
-        } else {
-            let parent = repositories
-                .first()
-                .and_then(|repo| repo.path.parent())
-                .ok_or_else(|| {
-                    ContainerError::Other(anyhow!(
-                        "Unable to determine workspace root; set workspace_dir in config"
-                    ))
-                })?;
-            parent.to_path_buf()
-        };
+        let repo_parent = repositories
+            .first()
+            .and_then(|repo| repo.path.parent())
+            .ok_or_else(|| {
+                ContainerError::Other(anyhow!(
+                    "Unable to determine workspace root; set workspace_dir in config"
+                ))
+            })?
+            .to_path_buf();
+        let base_dir = configured.map(PathBuf::from).unwrap_or_else(|| repo_parent.clone());
 
         if repositories.is_empty() {
             return Err(ContainerError::Other(anyhow!(
@@ -112,16 +109,38 @@ impl LocalContainerService {
 
         let normalize = |path: &Path| std::fs::canonicalize(path).unwrap_or(path.to_path_buf());
 
+        let mut mismatch = false;
         for repo in repositories {
             let expected = base_dir.join(&repo.name);
             if normalize(&expected) != normalize(&repo.path) {
+                mismatch = true;
+                break;
+            }
+        }
+
+        if mismatch {
+            let mut parent_mismatch = false;
+            for repo in repositories {
+                if repo.path.parent() != Some(repo_parent.as_path()) {
+                    parent_mismatch = true;
+                    break;
+                }
+            }
+
+            if parent_mismatch {
                 return Err(ContainerError::Other(anyhow!(
                     "Repository path mismatch for '{}': expected {}, got {}. Set workspace_dir to the parent directory containing the repo.",
-                    repo.name,
-                    expected.display(),
-                    repo.path.display()
+                    repositories.first().map(|repo| repo.name.as_str()).unwrap_or("unknown"),
+                    base_dir.display(),
+                    repositories.first().map(|repo| repo.path.display().to_string()).unwrap_or_default()
                 )));
             }
+
+            tracing::warn!(
+                "Workspace root mismatch with config; falling back to repository parent {}",
+                repo_parent.display()
+            );
+            return Ok(repo_parent);
         }
 
         Ok(base_dir)

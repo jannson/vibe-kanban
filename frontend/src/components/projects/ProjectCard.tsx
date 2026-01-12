@@ -17,6 +17,7 @@ import {
   ExternalLink,
   FolderOpen,
   Link2,
+  Loader2,
   MoreHorizontal,
   Trash2,
   Unlink,
@@ -25,7 +26,6 @@ import { Project } from 'shared/types';
 import { useEffect, useRef } from 'react';
 import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
-import { projectsApi } from '@/lib/api';
 import { LinkProjectDialog } from '@/components/dialogs/projects/LinkProjectDialog';
 import { useTranslation } from 'react-i18next';
 import { useProjectMutations } from '@/hooks/useProjectMutations';
@@ -46,10 +46,13 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
   const { data: repos } = useProjectRepos(project.id);
   const isSingleRepoProject = repos?.length === 1;
 
-  const { unlinkProject } = useProjectMutations({
+  const { unlinkProject, deleteProject } = useProjectMutations({
     onUnlinkError: (error) => {
       console.error('Failed to unlink project:', error);
       setError('Failed to unlink project');
+    },
+    onDeleteError: () => {
+      setError('Failed to delete project');
     },
   });
 
@@ -68,12 +71,7 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
     )
       return;
 
-    try {
-      await projectsApi.delete(id);
-    } catch (error) {
-      console.error('Failed to delete project:', error);
-      setError('Failed to delete project');
-    }
+    deleteProject.mutate(id);
   };
 
   const handleEdit = (project: Project) => {
@@ -178,8 +176,13 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
                     handleDelete(project.id, project.name);
                   }}
                   className="text-destructive"
+                  disabled={deleteProject.isPending}
                 >
-                  <Trash2 className="mr-2 h-4 w-4" />
+                  {deleteProject.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-2 h-4 w-4" />
+                  )}
                   {t('common:buttons.delete')}
                 </DropdownMenuItem>
               </DropdownMenuContent>

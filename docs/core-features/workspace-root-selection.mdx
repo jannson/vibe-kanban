@@ -1,0 +1,31 @@
+# Workspace Root Selection (Project Creation)
+
+## Goal
+
+Ensure project creation always binds a repository to a workspace root directory and limits repository selection to one level beneath that root.
+
+## Requirements
+
+- Project creation must prompt for a workspace root when none is configured.
+- Workspace root selection uses a folder picker dialog.
+- After selecting a workspace root, repository selection is limited to:
+  - Direct child folders of the workspace root
+  - Folders that contain a `.git` directory
+- Only one repository can be selected when creating a project.
+- Creating a new repository is allowed only under the selected workspace root.
+- The selected workspace root is stored as the default workspace root.
+
+## UX Flow
+
+1. If no default workspace root is set:
+   - Show a "Select Workspace Root" step (folder picker only).
+2. Once a workspace root exists:
+   - Show a list of git repositories found in the root's immediate child directories.
+   - User selects one repository to create a project.
+   - Optional: create a new repository under the workspace root.
+3. User can change the workspace root from the repository selection step.
+
+## Scope Notes
+
+- Browsing the entire filesystem for repositories is not allowed in this flow.
+- Repositories outside the workspace root are not eligible.

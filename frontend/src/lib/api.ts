@@ -806,8 +806,14 @@ export const fileSystemApi = {
     return handleApiResponse<DirectoryListResponse>(response);
   },
 
-  listGitRepos: async (path?: string): Promise<DirectoryEntry[]> => {
-    const queryParam = path ? `?path=${encodeURIComponent(path)}` : '';
+  listGitRepos: async (
+    path?: string,
+    depth?: number
+  ): Promise<DirectoryEntry[]> => {
+    const params = new URLSearchParams();
+    if (path) params.set('path', path);
+    if (depth !== undefined) params.set('depth', String(depth));
+    const queryParam = params.toString() ? `?${params.toString()}` : '';
     const response = await makeRequest(
       `/api/filesystem/git-repos${queryParam}`
     );

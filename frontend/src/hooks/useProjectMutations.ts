@@ -17,6 +17,8 @@ interface UseProjectMutationsOptions {
   onLinkError?: (err: unknown) => void;
   onUnlinkSuccess?: (project: Project) => void;
   onUnlinkError?: (err: unknown) => void;
+  onDeleteSuccess?: () => void;
+  onDeleteError?: (err: unknown) => void;
 }
 
 export function useProjectMutations(options?: UseProjectMutationsOptions) {
@@ -179,11 +181,40 @@ export function useProjectMutations(options?: UseProjectMutationsOptions) {
     },
   });
 
+  const deleteProject = useMutation({
+    mutationKey: ['deleteProject'],
+    mutationFn: (projectId: string) => projectsApi.delete(projectId),
+    onMutate: async (projectId: string) => {
+      await queryClient.cancelQueries({ queryKey: ['projects', 'list'] });
+      const previous = queryClient.getQueryData<Project[]>(['projects', 'list']);
+      queryClient.setQueryData<Project[]>(['projects', 'list'], (old) =>
+        old ? old.filter((project) => project.id !== projectId) : old
+      );
+      return { previous };
+    },
+    onError: (err, _projectId, context) => {
+      console.error('Failed to delete project:', err);
+      if (context?.previous) {
+        queryClient.setQueryData(['projects', 'list'], context.previous);
+      }
+      options?.onDeleteError?.(err);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects', 'list'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      options?.onDeleteSuccess?.();
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects', 'list'] });
+    },
+  });
+
   return {
     createProject,
     updateProject,
     linkToExisting,
     createAndLink,
     unlinkProject,
+    deleteProject,
   };
 }

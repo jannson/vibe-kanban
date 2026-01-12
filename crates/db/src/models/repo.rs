@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, Sqlite, SqlitePool};
+use sqlx::{Executor, FromRow, Row, Sqlite, SqlitePool, sqlite::SqliteRow};
 use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -28,22 +28,34 @@ pub struct Repo {
 }
 
 impl Repo {
+    fn from_row(row: &SqliteRow) -> Result<Self, sqlx::Error> {
+        let path: String = row.try_get("path")?;
+        Ok(Self {
+            id: row.try_get("id")?,
+            path: PathBuf::from(path),
+            name: row.try_get("name")?,
+            display_name: row.try_get("display_name")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+
     /// Get repos that still have the migration sentinel as their name.
     /// Used by the startup backfill to fix repo names.
     pub async fn list_needing_name_fix(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT id as "id!: Uuid",
+        let rows = sqlx::query(
+            r#"SELECT id,
                       path,
                       name,
                       display_name,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
+                      created_at,
+                      updated_at
                FROM repos
-               WHERE name = '__NEEDS_BACKFILL__'"#
+               WHERE name = '__NEEDS_BACKFILL__'"#,
         )
         .fetch_all(pool)
-        .await
+        .await?;
+        rows.into_iter().map(|row| Self::from_row(&row)).collect()
     }
 
     pub async fn update_name(
@@ -52,32 +64,53 @@ impl Repo {
         name: &str,
         display_name: &str,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
+        sqlx::query(
             "UPDATE repos SET name = $1, display_name = $2, updated_at = datetime('now', 'subsec') WHERE id = $3",
-            name,
-            display_name,
-            id
         )
+        .bind(name)
+        .bind(display_name)
+        .bind(id)
         .execute(pool)
         .await?;
         Ok(())
     }
 
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT id as "id!: Uuid",
+        let row = sqlx::query(
+            r#"SELECT id,
                       path,
                       name,
                       display_name,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
+                      created_at,
+                      updated_at
                FROM repos
                WHERE id = $1"#,
-            id
         )
+        .bind(id)
         .fetch_optional(pool)
-        .await
+        .await?;
+        row.map(|row| Self::from_row(&row)).transpose()
+    }
+
+    pub async fn find_by_path(
+        pool: &SqlitePool,
+        path: &Path,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        let path_str = path.to_string_lossy().to_string();
+        let row = sqlx::query(
+            r#"SELECT id,
+                      path,
+                      name,
+                      display_name,
+                      created_at,
+                      updated_at
+               FROM repos
+               WHERE path = $1"#,
+        )
+        .bind(path_str)
+        .fetch_optional(pool)
+        .await?;
+        row.map(|row| Self::from_row(&row)).transpose()
     }
 
     pub async fn find_or_create<'e, E>(
@@ -96,31 +129,31 @@ impl Repo {
             .unwrap_or_else(|| id.to_string());
 
         // Use INSERT OR IGNORE + SELECT to handle race conditions atomically
-        sqlx::query_as!(
-            Repo,
+        let row = sqlx::query(
             r#"INSERT INTO repos (id, path, name, display_name)
                VALUES ($1, $2, $3, $4)
                ON CONFLICT(path) DO UPDATE SET updated_at = updated_at
-               RETURNING id as "id!: Uuid",
+               RETURNING id,
                          path,
                          name,
                          display_name,
-                         created_at as "created_at!: DateTime<Utc>",
-                         updated_at as "updated_at!: DateTime<Utc>""#,
-            id,
-            path_str,
-            repo_name,
-            display_name,
+                         created_at,
+                         updated_at"#,
         )
+        .bind(id)
+        .bind(path_str)
+        .bind(repo_name)
+        .bind(display_name)
         .fetch_one(executor)
-        .await
+        .await?;
+        Self::from_row(&row)
     }
 
     pub async fn delete_orphaned(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"DELETE FROM repos
                WHERE id NOT IN (SELECT repo_id FROM project_repos)
-                 AND id NOT IN (SELECT repo_id FROM workspace_repos)"#
+                 AND id NOT IN (SELECT repo_id FROM workspace_repos)"#,
         )
         .execute(pool)
         .await?;

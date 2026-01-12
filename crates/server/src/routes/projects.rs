@@ -217,10 +217,17 @@ async fn apply_remote_project_link(
 
 pub async fn create_project(
     State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<CreateProject>,
+    Json(mut payload): Json<CreateProject>,
 ) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
     tracing::debug!("Creating project '{}'", payload.name);
     let repo_count = payload.repositories.len();
+    if payload.workspace_root.is_none() {
+        let config = deployment.config().read().await;
+        payload.workspace_root = config
+            .default_workspace_root
+            .clone()
+            .or_else(|| config.workspace_dir.clone());
+    }
 
     match deployment
         .project()
@@ -256,6 +263,15 @@ pub async fn create_project(
         ))),
         Err(ProjectServiceError::NotGitRepository(_)) => Ok(ResponseJson(ApiResponse::error(
             "The specified directory is not a git repository",
+        ))),
+        Err(ProjectServiceError::WorkspaceRootMissing) => Ok(ResponseJson(ApiResponse::error(
+            "Workspace root is required",
+        ))),
+        Err(ProjectServiceError::RepositoryAlreadyLinked) => Ok(ResponseJson(ApiResponse::error(
+            "This repository is already linked to another project",
+        ))),
+        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(ApiResponse::error(
+            "Repository must be directly under the workspace root",
         ))),
         Err(e) => Err(ProjectError::CreateFailed(e.to_string()).into()),
     }
@@ -511,6 +527,15 @@ pub async fn add_project_repository(
                 "A repository with this path already exists in the project",
             )))
         }
+        Err(ProjectServiceError::WorkspaceRootMissing) => Ok(ResponseJson(ApiResponse::error(
+            "Workspace root is required",
+        ))),
+        Err(ProjectServiceError::RepositoryAlreadyLinked) => Ok(ResponseJson(ApiResponse::error(
+            "This repository is already linked to another project",
+        ))),
+        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(ApiResponse::error(
+            "Repository must be directly under the workspace root",
+        ))),
         Err(e) => Err(e.into()),
     }
 }

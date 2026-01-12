@@ -165,9 +165,15 @@ pub trait Deployment: Clone + Send + Sync + 'static {
                     // Generate clean project name from path
                     let project_name = repo.name.clone();
                     let repo_path = repo.path.to_string_lossy().to_string();
+                    let workspace_root = repo
+                        .path
+                        .parent()
+                        .map(|parent| parent.to_string_lossy().to_string())
+                        .unwrap_or_else(|| repo_path.clone());
 
                     let create_data = CreateProject {
                         name: project_name,
+                        workspace_root: Some(workspace_root),
                         repositories: vec![CreateProjectRepo {
                             display_name: repo.name,
                             git_repo_path: repo_path.clone(),

@@ -44,6 +44,12 @@ pub enum ProjectServiceError {
     DuplicateRepositoryName,
     #[error("Repository not found")]
     RepositoryNotFound,
+    #[error("Workspace root is required")]
+    WorkspaceRootMissing,
+    #[error("Repository is already linked to another project")]
+    RepositoryAlreadyLinked,
+    #[error("Repository must be directly under the workspace root: {0}")]
+    RepoOutsideWorkspaceRoot(PathBuf),
     #[error("Git operation failed: {0}")]
     GitError(String),
     #[error("Remote client error: {0}")]
@@ -79,6 +85,13 @@ impl ProjectService {
         repo_service: &RepoService,
         payload: CreateProject,
     ) -> Result<Project> {
+        let workspace_root = payload
+            .workspace_root
+            .as_ref()
+            .map(PathBuf::from)
+            .ok_or(ProjectServiceError::WorkspaceRootMissing)?;
+        Self::validate_workspace_root(&workspace_root)?;
+
         // Validate all repository paths and check for duplicates within the payload
         let mut seen_names = HashSet::new();
         let mut seen_paths = HashSet::new();
@@ -87,6 +100,7 @@ impl ProjectService {
         for repo in &payload.repositories {
             let path = repo_service.normalize_path(&repo.git_repo_path)?;
             repo_service.validate_git_repo_path(&path)?;
+            Self::validate_repo_under_root(&path, &workspace_root)?;
 
             let normalized_path = path.to_string_lossy().to_string();
 
@@ -102,6 +116,15 @@ impl ProjectService {
                 display_name: repo.display_name.clone(),
                 git_repo_path: normalized_path,
             });
+        }
+
+        for repo in &normalized_repos {
+            if let Some(existing_repo) = Repo::find_by_path(pool, Path::new(&repo.git_repo_path)).await? {
+                let existing_links = ProjectRepo::find_by_repo_id(pool, existing_repo.id).await?;
+                if !existing_links.is_empty() {
+                    return Err(ProjectServiceError::RepositoryAlreadyLinked);
+                }
+            }
         }
 
         let id = Uuid::new_v4();
@@ -204,6 +227,31 @@ impl ProjectService {
 
         let path = repo_service.normalize_path(&payload.git_repo_path)?;
         repo_service.validate_git_repo_path(&path)?;
+        let mut workspace_root = None;
+        if let Some(project) = Project::find_by_id(pool, project_id).await? {
+            if let Some(root) = project.workspace_root {
+                workspace_root = Some(root);
+            } else {
+                let inferred_root = path
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                Project::set_workspace_root(pool, project_id, Some(inferred_root.clone())).await?;
+                workspace_root = Some(inferred_root);
+            }
+        }
+
+        if let Some(root) = workspace_root {
+            Self::validate_workspace_root(Path::new(&root))?;
+            Self::validate_repo_under_root(&path, Path::new(&root))?;
+        }
+
+        if let Some(existing_repo) = Repo::find_by_path(pool, &path).await? {
+            let existing_links = ProjectRepo::find_by_repo_id(pool, existing_repo.id).await?;
+            if existing_links.iter().any(|link| link.project_id != project_id) {
+                return Err(ProjectServiceError::RepositoryAlreadyLinked);
+            }
+        }
 
         // Count repos before adding
         let repo_count_before = ProjectRepo::find_by_project_id(pool, project_id)
@@ -484,5 +532,33 @@ impl ProjectService {
 
         results.truncate(10);
         Ok(results)
+    }
+}
+
+impl ProjectService {
+    fn validate_workspace_root(root: &Path) -> Result<()> {
+        if !root.exists() {
+            return Err(ProjectServiceError::PathNotFound(root.to_path_buf()));
+        }
+        if !root.is_dir() {
+            return Err(ProjectServiceError::PathNotDirectory(root.to_path_buf()));
+        }
+        Ok(())
+    }
+
+    fn validate_repo_under_root(
+        repo_path: &Path,
+        workspace_root: &Path,
+    ) -> Result<()> {
+        let root = std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+        let repo = std::fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
+
+        let is_root_repo = repo == root;
+        let is_direct_child = repo.parent().is_some_and(|parent| parent == root);
+        if is_root_repo || is_direct_child {
+            return Ok(());
+        }
+
+        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(repo))
     }
 }

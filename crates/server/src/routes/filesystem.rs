@@ -14,6 +14,7 @@ use crate::{DeploymentImpl, error::ApiError};
 #[derive(Debug, Deserialize)]
 pub struct ListDirectoryQuery {
     path: Option<String>,
+    depth: Option<usize>,
 }
 
 pub async fn list_directory(
@@ -42,15 +43,16 @@ pub async fn list_git_repos(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<ListDirectoryQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<DirectoryEntry>>>, ApiError> {
+    let max_depth = query.depth.or(Some(2));
     let res = if let Some(ref path) = query.path {
         deployment
             .filesystem()
-            .list_git_repos(Some(path.clone()), 800, 1200, Some(2))
+            .list_git_repos(Some(path.clone()), 800, 1200, max_depth)
             .await
     } else {
         deployment
             .filesystem()
-            .list_common_git_repos(800, 1200, Some(2))
+            .list_common_git_repos(800, 1200, max_depth)
             .await
     };
     match res {

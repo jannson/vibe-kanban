@@ -33,17 +33,20 @@ const ProjectFormDialogImpl = NiceModal.create<ProjectFormDialogProps>(() => {
   const hasStartedCreateRef = useRef(false);
 
   const handlePickRepo = useCallback(async () => {
-    const repo = await RepoPickerDialog.show({
+    const result = await RepoPickerDialog.show({
       title: 'Create Project',
       description: 'Select or create a repository for your project',
     });
 
-    if (repo) {
-      const projectName = repo.display_name || repo.name;
+    if (result) {
+      const projectName = result.repo.display_name || result.repo.name;
 
       const createData: CreateProject = {
         name: projectName,
-        repositories: [{ display_name: projectName, git_repo_path: repo.path }],
+        workspace_root: result.workspaceRoot,
+        repositories: [
+          { display_name: projectName, git_repo_path: result.repo.path },
+        ],
       };
 
       createProjectMutate(createData);

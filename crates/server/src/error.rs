@@ -338,6 +338,16 @@ impl From<ProjectServiceError> for ApiError {
             ProjectServiceError::RepositoryNotFound => {
                 ApiError::BadRequest("Repository not found".to_string())
             }
+            ProjectServiceError::WorkspaceRootMissing => {
+                ApiError::BadRequest("Workspace root is required".to_string())
+            }
+            ProjectServiceError::RepositoryAlreadyLinked => ApiError::Conflict(
+                "This repository is already linked to another project".to_string(),
+            ),
+            ProjectServiceError::RepoOutsideWorkspaceRoot(path) => ApiError::BadRequest(format!(
+                "Repository must be directly under the workspace root: {}",
+                path.display()
+            )),
             ProjectServiceError::GitError(msg) => {
                 ApiError::BadRequest(format!("Git operation failed: {}", msg))
             }

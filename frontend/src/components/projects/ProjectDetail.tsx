@@ -11,8 +11,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { projectsApi } from '@/lib/api';
 import { useProjects } from '@/hooks/useProjects';
+import { useProjectMutations } from '@/hooks/useProjectMutations';
 import {
   AlertCircle,
   ArrowLeft,
@@ -34,6 +34,17 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
   const navigate = useNavigateWithSearch();
   const { projectsById, isLoading, error: projectsError } = useProjects();
   const [deleteError, setDeleteError] = useState('');
+  const { deleteProject } = useProjectMutations({
+    onDeleteError: (error) => {
+      console.error('Failed to delete project:', error);
+      // @ts-expect-error it is type ApiError
+      setDeleteError(error.message || t('errors.deleteFailed'));
+      setTimeout(() => setDeleteError(''), 5000);
+    },
+    onDeleteSuccess: () => {
+      onBack();
+    },
+  });
 
   const project = projectsById[projectId] || null;
 
@@ -46,15 +57,7 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
     )
       return;
 
-    try {
-      await projectsApi.delete(projectId);
-      onBack();
-    } catch (error) {
-      console.error('Failed to delete project:', error);
-      // @ts-expect-error it is type ApiError
-      setDeleteError(error.message || t('errors.deleteFailed'));
-      setTimeout(() => setDeleteError(''), 5000);
-    }
+    deleteProject.mutate(projectId);
   };
 
   const handleEditClick = () => {
@@ -126,8 +129,13 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
             variant="outline"
             onClick={handleDelete}
             className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10"
+            disabled={deleteProject.isPending}
           >
-            <Trash2 className="mr-2 h-4 w-4" />
+            {deleteProject.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="mr-2 h-4 w-4" />
+            )}
             Delete
           </Button>
         </div>
