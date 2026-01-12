@@ -1,6 +1,5 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useCallback } from 'react';
-import { siDiscord } from 'simple-icons';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,7 +13,6 @@ import {
   Settings,
   BookOpen,
   MessageCircleQuestion,
-  MessageCircle,
   Menu,
   Plus,
   LogOut,
@@ -57,11 +55,6 @@ const EXTERNAL_LINKS = [
     icon: MessageCircleQuestion,
     href: 'https://github.com/BloopAI/vibe-kanban/issues',
   },
-  {
-    label: 'Discord',
-    icon: MessageCircle,
-    href: 'https://discord.gg/AC4nwVtJM3',
-  },
 ];
 
 function NavDivider() {
@@ -94,6 +87,9 @@ export function Navbar() {
   const { t } = useTranslation(['tasks', 'common']);
   // Navbar is global, but the share tasks toggle only makes sense on the tasks route
   const isTasksRoute = /^\/projects\/[^/]+\/tasks/.test(location.pathname);
+  const isProjectsRoute =
+    location.pathname === '/' || location.pathname.startsWith('/projects');
+  const isAllTasksRoute = location.pathname.startsWith('/tasks');
   const showSharedTasks = searchParams.get('shared') !== 'off';
   const shouldShowSharedToggle =
     isTasksRoute && active && project?.remote_project_id != null;
@@ -147,30 +143,6 @@ export function Navbar() {
             <Link to="/projects">
               <Logo />
             </Link>
-            <a
-              href="https://discord.gg/AC4nwVtJM3"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Join our Discord"
-              className="hidden sm:inline-flex items-center ml-3 text-xs font-medium overflow-hidden border h-6"
-            >
-              <span className="bg-muted text-foreground flex items-center p-2 border-r">
-                <svg
-                  className="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path d={siDiscord.path} />
-                </svg>
-              </span>
-              <span
-                className=" h-full items-center flex p-2"
-                aria-live="polite"
-              >
-                Join Discord
-              </span>
-            </a>
           </div>
 
           <div className="hidden sm:flex items-center gap-2">
@@ -234,6 +206,28 @@ export function Navbar() {
             ) : null}
 
             <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-9 w-9 ${isProjectsRoute ? 'bg-accent' : ''}`}
+                asChild
+                aria-label="Projects"
+              >
+                <Link to="/projects">
+                  <FolderOpen className="h-4 w-4" />
+                </Link>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-9 w-9 ${isAllTasksRoute ? 'bg-accent' : ''}`}
+                asChild
+                aria-label="All Tasks"
+              >
+                <Link to="/tasks">
+                  <LayoutGrid className="h-4 w-4" />
+                </Link>
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
