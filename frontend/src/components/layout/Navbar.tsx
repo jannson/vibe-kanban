@@ -87,9 +87,11 @@ export function Navbar() {
   const { t } = useTranslation(['tasks', 'common']);
   // Navbar is global, but the share tasks toggle only makes sense on the tasks route
   const isTasksRoute = /^\/projects\/[^/]+\/tasks/.test(location.pathname);
+  const isProjectDetailRoute = /^\/projects\/[^/]+$/.test(location.pathname);
   const isProjectsRoute =
     location.pathname === '/' || location.pathname.startsWith('/projects');
   const isAllTasksRoute = location.pathname.startsWith('/tasks');
+  const showQuickNav = !isProjectDetailRoute;
   const showSharedTasks = searchParams.get('shared') !== 'off';
   const shouldShowSharedToggle =
     isTasksRoute && active && project?.remote_project_id != null;
@@ -206,28 +208,32 @@ export function Navbar() {
             ) : null}
 
             <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-9 w-9 ${isProjectsRoute ? 'bg-accent' : ''}`}
-                asChild
-                aria-label="Projects"
-              >
-                <Link to="/projects">
-                  <FolderOpen className="h-4 w-4" />
-                </Link>
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-9 w-9 ${isAllTasksRoute ? 'bg-accent' : ''}`}
-                asChild
-                aria-label="All Tasks"
-              >
-                <Link to="/tasks">
-                  <LayoutGrid className="h-4 w-4" />
-                </Link>
-              </Button>
+              {showQuickNav && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-9 w-9 ${isProjectsRoute ? 'bg-accent' : ''}`}
+                    asChild
+                    aria-label="Projects"
+                  >
+                    <Link to="/projects">
+                      <FolderOpen className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={`h-9 w-9 ${isAllTasksRoute ? 'bg-accent' : ''}`}
+                    asChild
+                    aria-label="All Tasks"
+                  >
+                    <Link to="/tasks">
+                      <LayoutGrid className="h-4 w-4" />
+                    </Link>
+                  </Button>
+                </>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
