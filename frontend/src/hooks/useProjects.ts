@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import type { Project } from 'shared/types';
+import { projectsApi } from '@/lib/api';
 
 type ProjectsState = {
   projects: Record<string, Project>;
@@ -25,7 +27,27 @@ export function useProjects(): UseProjectsResult {
     initialData
   );
 
-  const projectsById = useMemo(() => data?.projects ?? {}, [data]);
+  const {
+    data: fallbackProjects,
+    isLoading: isFallbackLoading,
+    error: fallbackError,
+  } = useQuery({
+    queryKey: ['projects', 'list'],
+    queryFn: () => projectsApi.getAll(),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+
+  const projectsById = useMemo(() => {
+    if (data?.projects && Object.keys(data.projects).length > 0) {
+      return data.projects;
+    }
+    const map: Record<string, Project> = {};
+    (fallbackProjects ?? []).forEach((project) => {
+      map[project.id] = project;
+    });
+    return map;
+  }, [data?.projects, fallbackProjects]);
 
   const projects = useMemo(() => {
     return Object.values(projectsById).sort(
@@ -35,13 +57,21 @@ export function useProjects(): UseProjectsResult {
     );
   }, [projectsById]);
 
-  const projectsData = data ? projects : undefined;
-  const errorObj = useMemo(() => (error ? new Error(error) : null), [error]);
+  const projectsData = Object.keys(projectsById).length ? projects : undefined;
+  const errorObj = useMemo(() => {
+    if (error && !projectsData) {
+      return new Error(error);
+    }
+    if (fallbackError && !projectsData) {
+      return fallbackError as Error;
+    }
+    return null;
+  }, [error, fallbackError, projectsData]);
 
   return {
     projects: projectsData ?? [],
     projectsById,
-    isLoading: !data && !error,
+    isLoading: !projectsData && !errorObj && isFallbackLoading,
     isConnected,
     error: errorObj,
   };

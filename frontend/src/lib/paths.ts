@@ -1,5 +1,6 @@
 export const paths = {
   projects: () => '/projects',
+  allTasks: () => '/tasks',
   projectTasks: (projectId: string) => `/projects/${projectId}/tasks`,
   task: (projectId: string, taskId: string) =>
     `/projects/${projectId}/tasks/${taskId}`,

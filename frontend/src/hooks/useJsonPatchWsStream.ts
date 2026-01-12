@@ -41,6 +41,7 @@ export const useJsonPatchWsStream = <T extends object>(
   const retryAttemptsRef = useRef<number>(0);
   const [retryNonce, setRetryNonce] = useState(0);
   const finishedRef = useRef<boolean>(false);
+  const pingTimerRef = useRef<number | null>(null);
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
@@ -91,13 +92,35 @@ export const useJsonPatchWsStream = <T extends object>(
       // Reset finished flag for new connection
       finishedRef.current = false;
 
-      // Convert HTTP endpoint to WebSocket endpoint
-      const wsEndpoint = endpoint.replace(/^http/, 'ws');
+      const wsEndpoint = (() => {
+        if (endpoint.startsWith('ws://') || endpoint.startsWith('wss://')) {
+          return endpoint;
+        }
+
+        if (/^https?:\/\//.test(endpoint)) {
+          return endpoint.replace(/^http/, 'ws');
+        }
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}${endpoint}`;
+      })();
+
       const ws = new WebSocket(wsEndpoint);
 
       ws.onopen = () => {
         setError(null);
         setIsConnected(true);
+        if (dataRef.current) {
+          setData((prev) => prev ?? dataRef.current);
+        }
+        if (pingTimerRef.current) {
+          window.clearInterval(pingTimerRef.current);
+        }
+        pingTimerRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send('ping');
+          }
+        }, 25000);
         // Reset backoff on successful connection
         retryAttemptsRef.current = 0;
         if (retryTimerRef.current) {
@@ -151,6 +174,19 @@ export const useJsonPatchWsStream = <T extends object>(
       ws.onclose = (evt) => {
         setIsConnected(false);
         wsRef.current = null;
+        if (pingTimerRef.current) {
+          window.clearInterval(pingTimerRef.current);
+          pingTimerRef.current = null;
+        }
+        if (evt) {
+          setError(`Connection closed (${evt.code})`);
+          console.warn('WebSocket closed', {
+            code: evt.code,
+            reason: evt.reason,
+            wasClean: evt.wasClean,
+            endpoint: wsEndpoint,
+          });
+        }
 
         // Do not reconnect if we received a finished message or clean close
         if (finishedRef.current || (evt?.code === 1000 && evt?.wasClean)) {
@@ -166,6 +202,10 @@ export const useJsonPatchWsStream = <T extends object>(
     }
 
     return () => {
+      if (pingTimerRef.current) {
+        window.clearInterval(pingTimerRef.current);
+        pingTimerRef.current = null;
+      }
       if (wsRef.current) {
         const ws = wsRef.current;
 
@@ -183,9 +223,6 @@ export const useJsonPatchWsStream = <T extends object>(
         window.clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
-      finishedRef.current = false;
-      dataRef.current = undefined;
-      setData(undefined);
     };
   }, [
     endpoint,

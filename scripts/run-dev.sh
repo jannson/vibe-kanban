@@ -10,9 +10,34 @@ fi
 # Bind backend to all interfaces for remote access.
 export HOST="${HOST:-0.0.0.0}"
 
+# Ensure dev config lives in a consistent location.
+ORIGINAL_XDG_DATA_HOME="${XDG_DATA_HOME:-}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-/config/vibe-kanban/repo-dev}"
+if [ -z "${ORIGINAL_XDG_DATA_HOME}" ]; then
+  ORIGINAL_XDG_DATA_HOME="${HOME}/.local/share"
+fi
+
+OLD_CONFIG_DIR="${ORIGINAL_XDG_DATA_HOME}/vibe-kanban"
+NEW_CONFIG_DIR="${XDG_DATA_HOME}/vibe-kanban"
+
+if [ "${OLD_CONFIG_DIR}" != "${NEW_CONFIG_DIR}" ] && [ -d "${OLD_CONFIG_DIR}" ]; then
+  mkdir -p "${NEW_CONFIG_DIR}"
+  for file in config.json profiles.json credentials.json; do
+    if [ -f "${OLD_CONFIG_DIR}/${file}" ] && [ ! -f "${NEW_CONFIG_DIR}/${file}" ]; then
+      cp "${OLD_CONFIG_DIR}/${file}" "${NEW_CONFIG_DIR}/${file}"
+      echo "Migrated ${file} -> ${NEW_CONFIG_DIR}/${file}"
+    fi
+  done
+fi
+
 # Fix ports for remote access.
 export FRONTEND_PORT="${FRONTEND_PORT:-3002}"
 export BACKEND_PORT="${BACKEND_PORT:-3102}"
+BACKEND_HOST="${BACKEND_HOST:-${HOST}}"
+if [ "${BACKEND_HOST}" = "0.0.0.0" ]; then
+  BACKEND_HOST="127.0.0.1"
+fi
+export BACKEND_HOST
 
 # Default workspace dir for original repositories (see dev_assets/config.json).
 # Override with `WORKSPACE_DIR=/path/to/workspace scripts/run-dev.sh`.
@@ -91,4 +116,4 @@ echo "Starting dev servers..."
 
 "${PNPM_CMD[@]}" exec concurrently \
   "BACKEND_PORT=${BACKEND_PORT} DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug cargo watch -w crates -x 'run --bin server'" \
-  "cd frontend && npm run dev -- --port ${FRONTEND_PORT} --host --strictPort"
+  "cd frontend && BACKEND_PORT=${BACKEND_PORT} npm run dev -- --port ${FRONTEND_PORT} --host --strictPort"

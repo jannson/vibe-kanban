@@ -236,6 +236,11 @@ export const handleApiResponse = async <T, E = T>(
 
 // Project Management APIs
 export const projectsApi = {
+  getAll: async (): Promise<Project[]> => {
+    const response = await makeRequest('/api/projects');
+    return handleApiResponse<Project[]>(response);
+  },
+
   create: async (data: CreateProject): Promise<Project> => {
     const response = await makeRequest('/api/projects', {
       method: 'POST',
@@ -387,6 +392,15 @@ export const projectsApi = {
 
 // Task Management APIs
 export const tasksApi = {
+  getByProject: async (
+    projectId: string
+  ): Promise<TaskWithAttemptStatus[]> => {
+    const response = await makeRequest(
+      `/api/tasks?project_id=${encodeURIComponent(projectId)}`
+    );
+    return handleApiResponse<TaskWithAttemptStatus[]>(response);
+  },
+
   getById: async (taskId: string): Promise<Task> => {
     const response = await makeRequest(`/api/tasks/${taskId}`);
     return handleApiResponse<Task>(response);

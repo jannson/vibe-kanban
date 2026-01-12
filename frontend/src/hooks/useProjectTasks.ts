@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import { useAuth } from '@/hooks';
 import { useProject } from '@/contexts/ProjectContext';
@@ -6,6 +7,7 @@ import { useLiveQuery, eq, isNull } from '@tanstack/react-db';
 import { sharedTasksCollection } from '@/lib/electric/sharedTasksCollection';
 import { useAssigneeUserNames } from './useAssigneeUserName';
 import { useAutoLinkSharedTasks } from './useAutoLinkSharedTasks';
+import { tasksApi } from '@/lib/api';
 import type {
   SharedTask,
   TaskStatus,
@@ -54,6 +56,18 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     initialData
   );
 
+  const {
+    data: fallbackTasks,
+    isLoading: isFallbackLoading,
+    error: fallbackError,
+  } = useQuery({
+    queryKey: ['tasks', 'project', projectId],
+    queryFn: () => tasksApi.getByProject(projectId),
+    enabled: Boolean(projectId),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+
   const sharedTasksQuery = useLiveQuery(
     useCallback(
       (q) => {
@@ -77,7 +91,16 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     [sharedTasksQuery.data]
   );
 
-  const localTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+  const localTasksById = useMemo(() => {
+    if (data?.tasks && Object.keys(data.tasks).length > 0) {
+      return data.tasks;
+    }
+    const map: Record<string, TaskWithAttemptStatus> = {};
+    (fallbackTasks ?? []).forEach((task) => {
+      map[task.id] = task;
+    });
+    return map;
+  }, [data?.tasks, fallbackTasks]);
 
   const referencedSharedIds = useMemo(
     () =>
@@ -177,7 +200,9 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     return grouped;
   }, [localTasksById, sharedTasksById, referencedSharedIds]);
 
-  const isLoading = !data && !error; // until first snapshot
+  const hasTasks = Object.keys(localTasksById).length > 0;
+  const isLoading =
+    !hasTasks && !error && !fallbackError && isFallbackLoading;
 
   // Auto-link shared tasks assigned to current user
   useAutoLinkSharedTasks({

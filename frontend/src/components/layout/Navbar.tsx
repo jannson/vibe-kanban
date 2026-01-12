@@ -19,6 +19,7 @@ import {
   Plus,
   LogOut,
   LogIn,
+  LayoutGrid,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SearchBar } from '@/components/SearchBar';
@@ -28,7 +29,6 @@ import { useProject } from '@/contexts/ProjectContext';
 import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useProjectRepos } from '@/hooks';
-import { useDiscordOnlineCount } from '@/hooks/useDiscordOnlineCount';
 import { useTranslation } from 'react-i18next';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -41,7 +41,10 @@ import { OAuthDialog } from '@/components/dialogs/global/OAuthDialog';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { oauthApi } from '@/lib/api';
 
-const INTERNAL_NAV = [{ label: 'Projects', icon: FolderOpen, to: '/projects' }];
+const INTERNAL_NAV = [
+  { label: 'Projects', icon: FolderOpen, to: '/projects' },
+  { label: 'All Tasks', icon: LayoutGrid, to: '/tasks' },
+];
 
 const EXTERNAL_LINKS = [
   {
@@ -77,7 +80,6 @@ export function Navbar() {
   const { projectId, project } = useProject();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
-  const { data: onlineCount } = useDiscordOnlineCount();
   const { loginStatus, reloadSystem } = useUserSystem();
 
   const { data: repos } = useProjectRepos(projectId);
@@ -166,9 +168,7 @@ export function Navbar() {
                 className=" h-full items-center flex p-2"
                 aria-live="polite"
               >
-                {onlineCount != null
-                  ? `${onlineCount.toLocaleString()} online`
-                  : 'online'}
+                Join Discord
               </span>
             </a>
           </div>

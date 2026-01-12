@@ -39,16 +39,20 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskQuery {
-    pub project_id: Uuid,
+    pub project_id: Option<Uuid>,
+    pub all_projects: Option<bool>,
 }
 
 pub async fn get_tasks(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<TaskQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<TaskWithAttemptStatus>>>, ApiError> {
+    let project_id = query
+        .project_id
+        .ok_or_else(|| ApiError::BadRequest("project_id is required".to_string()))?;
+
     let tasks =
-        Task::find_by_project_id_with_attempt_status(&deployment.db().pool, query.project_id)
-            .await?;
+        Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id).await?;
 
     Ok(ResponseJson(ApiResponse::success(tasks)))
 }
@@ -58,8 +62,23 @@ pub async fn stream_tasks_ws(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<TaskQuery>,
 ) -> impl IntoResponse {
+    if query.all_projects.unwrap_or(false) {
+        return ws.on_upgrade(move |socket| async move {
+            if let Err(e) = handle_all_tasks_ws(socket, deployment).await {
+                tracing::warn!("tasks WS closed: {}", e);
+            }
+        });
+    }
+
+    let project_id = match query.project_id {
+        Some(project_id) => project_id,
+        None => {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_tasks_ws(socket, deployment, query.project_id).await {
+        if let Err(e) = handle_tasks_ws(socket, deployment, project_id).await {
             tracing::warn!("tasks WS closed: {}", e);
         }
     })
@@ -89,6 +108,35 @@ async fn handle_tasks_ws(
             Ok(msg) => {
                 if sender.send(msg).await.is_err() {
                     break; // client disconnected
+                }
+            }
+            Err(e) => {
+                tracing::error!("stream error: {}", e);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_all_tasks_ws(
+    socket: WebSocket,
+    deployment: DeploymentImpl,
+) -> anyhow::Result<()> {
+    let mut stream = deployment
+        .events()
+        .stream_all_tasks_raw()
+        .await?
+        .map_ok(|msg| msg.to_ws_message_unchecked());
+
+    let (mut sender, mut receiver) = socket.split();
+    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
+
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(msg) => {
+                if sender.send(msg).await.is_err() {
+                    break;
                 }
             }
             Err(e) => {

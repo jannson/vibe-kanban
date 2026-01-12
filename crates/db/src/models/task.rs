@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, Sqlite, SqlitePool, Type};
+use sqlx::{Executor, FromRow, Row, Sqlite, SqlitePool, Type};
 use strum_macros::{Display, EnumString};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -208,6 +208,98 @@ ORDER BY t.created_at DESC"#,
                 executor: rec.executor,
             })
             .collect();
+
+        Ok(tasks)
+    }
+
+    pub async fn find_all_with_attempt_status(
+        pool: &SqlitePool,
+    ) -> Result<Vec<TaskWithAttemptStatus>, sqlx::Error> {
+        let records = sqlx::query(
+            r#"SELECT
+  t.id                            AS "id",
+  t.project_id                    AS "project_id",
+  t.title                         AS "title",
+  t.description                   AS "description",
+  t.status                        AS "status",
+  t.parent_workspace_id           AS "parent_workspace_id",
+  t.shared_task_id                AS "shared_task_id",
+  t.created_at                    AS "created_at",
+  t.updated_at                    AS "updated_at",
+
+  CASE WHEN EXISTS (
+    SELECT 1
+      FROM workspaces w
+      JOIN sessions s ON s.workspace_id = w.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w.task_id       = t.id
+       AND ep.status        = 'running'
+       AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     LIMIT 1
+  ) THEN 1 ELSE 0 END            AS "has_in_progress_attempt",
+
+  CASE WHEN (
+    SELECT ep.status
+      FROM workspaces w
+      JOIN sessions s ON s.workspace_id = w.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w.task_id       = t.id
+     AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     ORDER BY ep.created_at DESC
+     LIMIT 1
+  ) IN ('failed','killed') THEN 1 ELSE 0 END
+                                 AS "last_attempt_failed",
+
+  ( SELECT s.executor
+      FROM workspaces w
+      JOIN sessions s ON s.workspace_id = w.id
+      WHERE w.task_id = t.id
+     ORDER BY s.created_at DESC
+      LIMIT 1
+    )                               AS "executor"
+
+FROM tasks t
+ORDER BY t.created_at DESC"#
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let tasks = records
+            .into_iter()
+            .map(|rec| {
+                let id: Uuid = rec.try_get("id")?;
+                let project_id: Uuid = rec.try_get("project_id")?;
+                let title: String = rec.try_get("title")?;
+                let description: Option<String> = rec.try_get("description")?;
+                let status: TaskStatus = rec.try_get("status")?;
+                let parent_workspace_id: Option<Uuid> =
+                    rec.try_get("parent_workspace_id")?;
+                let shared_task_id: Option<Uuid> = rec.try_get("shared_task_id")?;
+                let created_at: DateTime<Utc> = rec.try_get("created_at")?;
+                let updated_at: DateTime<Utc> = rec.try_get("updated_at")?;
+                let has_in_progress_attempt: i64 =
+                    rec.try_get("has_in_progress_attempt")?;
+                let last_attempt_failed: i64 = rec.try_get("last_attempt_failed")?;
+                let executor: String = rec.try_get("executor")?;
+
+                Ok(TaskWithAttemptStatus {
+                    task: Task {
+                        id,
+                        project_id,
+                        title,
+                        description,
+                        status,
+                        parent_workspace_id,
+                        shared_task_id,
+                        created_at,
+                        updated_at,
+                    },
+                    has_in_progress_attempt: has_in_progress_attempt != 0,
+                    last_attempt_failed: last_attempt_failed != 0,
+                    executor,
+                })
+            })
+            .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
         Ok(tasks)
     }
