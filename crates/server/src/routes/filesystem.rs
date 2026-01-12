@@ -45,12 +45,12 @@ pub async fn list_git_repos(
     let res = if let Some(ref path) = query.path {
         deployment
             .filesystem()
-            .list_git_repos(Some(path.clone()), 800, 1200, Some(3))
+            .list_git_repos(Some(path.clone()), 800, 1200, Some(2))
             .await
     } else {
         deployment
             .filesystem()
-            .list_common_git_repos(800, 1200, Some(4))
+            .list_common_git_repos(800, 1200, Some(2))
             .await
     };
     match res {
