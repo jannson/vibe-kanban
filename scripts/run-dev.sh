@@ -31,8 +31,9 @@ if [ "${OLD_CONFIG_DIR}" != "${NEW_CONFIG_DIR}" ] && [ -d "${OLD_CONFIG_DIR}" ];
 fi
 
 # Fix ports for remote access.
-export FRONTEND_PORT="${FRONTEND_PORT:-3002}"
-export BACKEND_PORT="${BACKEND_PORT:-3102}"
+# Frontend/backend run behind a local basic-auth proxy by default.
+export FRONTEND_PORT="${FRONTEND_PORT:-3032}"
+export BACKEND_PORT="${BACKEND_PORT:-3033}"
 BACKEND_HOST="${BACKEND_HOST:-${HOST}}"
 if [ "${BACKEND_HOST}" = "0.0.0.0" ]; then
   BACKEND_HOST="127.0.0.1"
@@ -47,6 +48,13 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-/projects/workspace-linkease-ubuntu/sdk-share}
 export VIBE_KANBAN_USE_ORIGINAL_REPOS="${VIBE_KANBAN_USE_ORIGINAL_REPOS:-1}"
 # Default worktree base path (used when original repos mode is disabled).
 export VIBE_KANBAN_WORKTREE_PATH="${VIBE_KANBAN_WORKTREE_PATH:-/projects/workspace-linkease-ubuntu/worktree-repos}"
+
+# Basic auth proxy defaults for dev.
+export BASIC_AUTH_USER="${BASIC_AUTH_USER:-admin}"
+export BASIC_AUTH_PASS="${BASIC_AUTH_PASS:-admin}"
+export PROXY_LISTEN_ADDR="${PROXY_LISTEN_ADDR:-:3002}"
+export FRONTEND_UPSTREAM="${FRONTEND_UPSTREAM:-http://127.0.0.1:${FRONTEND_PORT}}"
+export BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://127.0.0.1:${BACKEND_PORT}}"
 
 # Ensure config.json points at the desired workspace root in dev (debug_assertions).
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -99,6 +107,11 @@ if ! command -v pnpm >/dev/null 2>&1; then
   fi
 fi
 
+if ! command -v go >/dev/null 2>&1; then
+  echo "go not found; required to run the basic auth proxy." >&2
+  exit 1
+fi
+
 # Optional: run checks before starting dev.
 # Defaults to ON; set `SKIP_CHECKS=1` to skip.
 if [ "${SKIP_CHECKS:-0}" != "1" ]; then
@@ -122,4 +135,5 @@ echo "Starting dev servers..."
 
 "${PNPM_CMD[@]}" exec concurrently \
   "BACKEND_PORT=${BACKEND_PORT} DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug cargo watch -w crates -x 'run --bin server'" \
-  "cd frontend && BACKEND_PORT=${BACKEND_PORT} npm run dev -- --port ${FRONTEND_PORT} --host --strictPort"
+  "cd frontend && BACKEND_PORT=${BACKEND_PORT} npm run dev -- --port ${FRONTEND_PORT} --host --strictPort" \
+  "cd tools/basic-auth-proxy && go run ."
