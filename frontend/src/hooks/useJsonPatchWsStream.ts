@@ -153,7 +153,6 @@ export const useJsonPatchWsStream = <T extends object>(
 
             const current = dataRef.current;
             if (!filtered.length || !current) return;
-
             // Deep clone the current state before mutating it
             const next = structuredClone(current);
 

@@ -272,15 +272,13 @@ impl EventService {
         // Get all sessions for this workspace
         let sessions = Session::find_by_workspace_id(&self.db.pool, workspace_id).await?;
 
-        // Collect all execution processes across all sessions
-        let mut all_processes = Vec::new();
-        for session in &sessions {
-            let processes =
-                ExecutionProcess::find_by_session_id(&self.db.pool, session.id, show_soft_deleted)
-                    .await?;
-            all_processes.extend(processes);
-        }
-        let processes = all_processes;
+        // Collect all execution processes across all sessions in one query
+        let processes = ExecutionProcess::find_by_workspace_id(
+            &self.db.pool,
+            workspace_id,
+            show_soft_deleted,
+        )
+        .await?;
 
         // Collect session IDs for filtering
         let session_ids: Vec<Uuid> = sessions.iter().map(|s| s.id).collect();
