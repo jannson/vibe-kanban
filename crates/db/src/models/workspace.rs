@@ -49,6 +49,7 @@ pub struct Workspace {
     pub id: Uuid,
     pub task_id: Uuid,
     pub container_ref: Option<String>,
+    pub use_original_repos: Option<bool>,
     pub branch: String,
     pub agent_working_dir: Option<String>,
     pub setup_completed_at: Option<DateTime<Utc>>,
@@ -91,6 +92,7 @@ pub struct WorkspaceContext {
 pub struct CreateWorkspace {
     pub branch: String,
     pub agent_working_dir: Option<String>,
+    pub use_original_repos: Option<bool>,
 }
 
 impl Workspace {
@@ -109,6 +111,7 @@ impl Workspace {
                 r#"SELECT id AS "id!: Uuid",
                               task_id AS "task_id!: Uuid",
                               container_ref,
+                              use_original_repos,
                               branch,
                               agent_working_dir,
                               setup_completed_at AS "setup_completed_at: DateTime<Utc>",
@@ -127,6 +130,7 @@ impl Workspace {
                 r#"SELECT id AS "id!: Uuid",
                               task_id AS "task_id!: Uuid",
                               container_ref,
+                              use_original_repos,
                               branch,
                               agent_working_dir,
                               setup_completed_at AS "setup_completed_at: DateTime<Utc>",
@@ -155,6 +159,7 @@ impl Workspace {
             r#"SELECT  w.id                AS "id!: Uuid",
                        w.task_id           AS "task_id!: Uuid",
                        w.container_ref,
+                       w.use_original_repos,
                        w.branch,
                        w.agent_working_dir,
                        w.setup_completed_at AS "setup_completed_at: DateTime<Utc>",
@@ -223,6 +228,21 @@ impl Workspace {
         Ok(())
     }
 
+    pub async fn update_use_original_repos(
+        pool: &SqlitePool,
+        workspace_id: Uuid,
+        use_original_repos: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "UPDATE workspaces SET use_original_repos = $1, updated_at = datetime('now') WHERE id = $2",
+            use_original_repos,
+            workspace_id
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
     /// Update the workspace's updated_at timestamp to prevent cleanup.
     /// Call this when the workspace is accessed (e.g., opened in editor).
     pub async fn touch(pool: &SqlitePool, workspace_id: Uuid) -> Result<(), sqlx::Error> {
@@ -241,6 +261,7 @@ impl Workspace {
             r#"SELECT  id                AS "id!: Uuid",
                        task_id           AS "task_id!: Uuid",
                        container_ref,
+                       use_original_repos,
                        branch,
                        agent_working_dir,
                        setup_completed_at AS "setup_completed_at: DateTime<Utc>",
@@ -260,6 +281,7 @@ impl Workspace {
             r#"SELECT  id                AS "id!: Uuid",
                        task_id           AS "task_id!: Uuid",
                        container_ref,
+                       use_original_repos,
                        branch,
                        agent_working_dir,
                        setup_completed_at AS "setup_completed_at: DateTime<Utc>",
@@ -298,6 +320,7 @@ impl Workspace {
                 w.id as "id!: Uuid",
                 w.task_id as "task_id!: Uuid",
                 w.container_ref,
+                w.use_original_repos,
                 w.branch as "branch!",
                 w.agent_working_dir,
                 w.setup_completed_at as "setup_completed_at: DateTime<Utc>",
@@ -313,7 +336,7 @@ impl Workspace {
                     JOIN execution_processes ep2 ON s2.id = ep2.session_id
                     WHERE ep2.completed_at IS NULL
                 )
-            GROUP BY w.id, w.container_ref, w.updated_at
+            GROUP BY w.id, w.container_ref, w.use_original_repos, w.updated_at
             HAVING datetime('now', '-72 hours') > datetime(
                 MAX(
                     CASE
@@ -342,12 +365,13 @@ impl Workspace {
     ) -> Result<Self, WorkspaceError> {
         Ok(sqlx::query_as!(
             Workspace,
-            r#"INSERT INTO workspaces (id, task_id, container_ref, branch, agent_working_dir, setup_completed_at)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               RETURNING id as "id!: Uuid", task_id as "task_id!: Uuid", container_ref, branch, agent_working_dir, setup_completed_at as "setup_completed_at: DateTime<Utc>", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
+            r#"INSERT INTO workspaces (id, task_id, container_ref, use_original_repos, branch, agent_working_dir, setup_completed_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id as "id!: Uuid", task_id as "task_id!: Uuid", container_ref, use_original_repos, branch, agent_working_dir, setup_completed_at as "setup_completed_at: DateTime<Utc>", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
             id,
             task_id,
             Option::<String>::None,
+            data.use_original_repos,
             data.branch,
             data.agent_working_dir,
             Option::<DateTime<Utc>>::None

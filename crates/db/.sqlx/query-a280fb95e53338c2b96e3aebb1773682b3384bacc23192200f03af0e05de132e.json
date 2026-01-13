@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT  w.id                AS \"id!: Uuid\",\n                       w.task_id           AS \"task_id!: Uuid\",\n                       w.container_ref,\n                       w.branch,\n                       w.agent_working_dir,\n                       w.setup_completed_at AS \"setup_completed_at: DateTime<Utc>\",\n                       w.created_at        AS \"created_at!: DateTime<Utc>\",\n                       w.updated_at        AS \"updated_at!: DateTime<Utc>\"\n               FROM    workspaces w\n               JOIN    tasks t ON w.task_id = t.id\n               JOIN    projects p ON t.project_id = p.id\n               WHERE   w.id = $1 AND t.id = $2 AND p.id = $3",
+  "query": "SELECT id AS \"id!: Uuid\",\n                              task_id AS \"task_id!: Uuid\",\n                              container_ref,\n                              use_original_repos,\n                              branch,\n                              agent_working_dir,\n                              setup_completed_at AS \"setup_completed_at: DateTime<Utc>\",\n                              created_at AS \"created_at!: DateTime<Utc>\",\n                              updated_at AS \"updated_at!: DateTime<Utc>\"\n                       FROM workspaces\n                       ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -19,37 +19,43 @@
         "type_info": "Text"
       },
       {
-        "name": "branch",
+        "name": "use_original_repos",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Bool"
       },
       {
-        "name": "agent_working_dir",
+        "name": "branch",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "setup_completed_at: DateTime<Utc>",
+        "name": "agent_working_dir",
         "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "setup_completed_at: DateTime<Utc>",
+        "ordinal": 6,
         "type_info": "Datetime"
       },
       {
         "name": "created_at!: DateTime<Utc>",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Text"
       },
       {
         "name": "updated_at!: DateTime<Utc>",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 0
     },
     "nullable": [
       true,
       false,
+      true,
       true,
       false,
       true,
@@ -58,5 +64,5 @@
       false
     ]
   },
-  "hash": "7c6ce796263a1b9c1a9f14fc4a565063fb627263efe4303ef7f165b0b3e6b21e"
+  "hash": "a280fb95e53338c2b96e3aebb1773682b3384bacc23192200f03af0e05de132e"
 }

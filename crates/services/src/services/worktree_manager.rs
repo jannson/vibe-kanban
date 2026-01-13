@@ -516,6 +516,13 @@ impl WorktreeManager {
 
     /// Get the base directory for vibe-kanban worktrees
     pub fn get_worktree_base_dir() -> std::path::PathBuf {
+        if let Ok(raw_path) = std::env::var("VIBE_KANBAN_WORKTREE_PATH") {
+            let trimmed = raw_path.trim();
+            if !trimmed.is_empty() {
+                return utils::path::expand_tilde(trimmed);
+            }
+        }
+
         utils::path::get_vibe_kanban_temp_dir().join("worktrees")
     }
 

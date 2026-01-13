@@ -25,7 +25,9 @@ use executors::profile::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use services::services::{
-    container::ContainerService, share::ShareError, workspace_manager::WorkspaceManager,
+    container::ContainerService,
+    share::ShareError,
+    workspace_manager::WorkspaceManager,
 };
 use sqlx::Error as SqlxError;
 use ts_rs::TS;
@@ -41,6 +43,16 @@ use crate::{
 pub struct TaskQuery {
     pub project_id: Option<Uuid>,
     pub all_projects: Option<bool>,
+}
+
+fn default_use_original_repos() -> bool {
+    std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok()
+}
+
+fn infer_use_original_repos(container_ref: &str) -> bool {
+    let workspace_base = WorkspaceManager::get_workspace_base_dir();
+    let container_path = PathBuf::from(container_ref);
+    !container_path.starts_with(&workspace_base)
 }
 
 pub async fn get_tasks(
@@ -193,6 +205,7 @@ pub struct CreateAndStartTaskRequest {
     pub task: CreateTask,
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<WorkspaceRepoInput>,
+    pub use_original_repos: Option<bool>,
 }
 
 pub async fn create_task_and_start(
@@ -241,12 +254,16 @@ pub async fn create_task_and_start(
         .as_ref()
         .filter(|dir: &&String| !dir.is_empty())
         .cloned();
+    let use_original_repos = payload
+        .use_original_repos
+        .unwrap_or_else(default_use_original_repos);
 
     let workspace = Workspace::create(
         pool,
         &CreateWorkspace {
             branch: git_branch_name,
             agent_working_dir,
+            use_original_repos: Some(use_original_repos),
         },
         attempt_id,
         task.id,
@@ -383,10 +400,37 @@ pub async fn delete_task(
 
     let repositories = WorkspaceRepo::find_unique_repos_for_task(pool, task.id).await?;
 
+    for attempt in &attempts {
+        if attempt.use_original_repos.is_none()
+            && let Some(container_ref) = attempt.container_ref.as_deref()
+        {
+            let inferred = infer_use_original_repos(container_ref);
+            if let Err(err) =
+                Workspace::update_use_original_repos(pool, attempt.id, inferred).await
+            {
+                tracing::warn!(
+                    "Failed to backfill use_original_repos for workspace {}: {}",
+                    attempt.id,
+                    err
+                );
+            }
+        }
+    }
+
     // Collect workspace directories that need cleanup
     let workspace_dirs: Vec<PathBuf> = attempts
         .iter()
-        .filter_map(|attempt| attempt.container_ref.as_ref().map(PathBuf::from))
+        .filter_map(|attempt| {
+            let container_ref = attempt.container_ref.as_deref()?;
+            let is_original = match attempt.use_original_repos {
+                Some(value) => value,
+                None => infer_use_original_repos(container_ref),
+            };
+            if is_original {
+                return None;
+            }
+            Some(PathBuf::from(container_ref))
+        })
         .collect();
 
     if let Some(shared_task_id) = task.shared_task_id {
@@ -446,11 +490,6 @@ pub async fn delete_task(
             workspace_dirs.len(),
             repositories.len()
         );
-
-        if std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok() {
-            tracing::info!("Skipping workspace cleanup in original repo mode");
-            return;
-        }
 
         for workspace_dir in &workspace_dirs {
             if let Err(e) = WorkspaceManager::cleanup_workspace(workspace_dir, &repositories).await

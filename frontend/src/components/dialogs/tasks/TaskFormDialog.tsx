@@ -81,6 +81,7 @@ type TaskFormValues = {
   executorProfileId: ExecutorProfileId | null;
   repoBranches: RepoBranch[];
   autoStart: boolean;
+  useWorktree: boolean;
 };
 
 const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
@@ -136,6 +137,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
+          useWorktree: false,
         };
 
       case 'duplicate':
@@ -146,6 +148,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          useWorktree: false,
         };
 
       case 'subtask':
@@ -158,6 +161,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          useWorktree: false,
         };
     }
   }, [mode, props, system.config?.executor_profile, defaultRepoBranches]);
@@ -197,11 +201,13 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           repo_id: rb.repoId,
           target_branch: rb.branch,
         }));
+        const useOriginalRepos = value.useWorktree ? false : null;
         await createAndStart.mutateAsync(
           {
             task,
             executor_profile_id: value.executorProfileId!,
             repos,
+            use_original_repos: useOriginalRepos,
           },
           { onSuccess: () => modal.remove() }
         );
@@ -606,6 +612,33 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                         }}
                       </form.Field>
                     )}
+                    <form.Field name="useWorktree">
+                      {(field) => (
+                        <div className="flex items-start justify-between gap-3 rounded-md border border-border/60 p-3">
+                          <div className="space-y-1">
+                            <Label
+                              htmlFor="task-worktree-switch"
+                              className="text-sm font-medium"
+                            >
+                              {t('createAttemptDialog.useWorktree')}
+                            </Label>
+                            <p className="text-xs text-muted-foreground">
+                              {t('createAttemptDialog.useWorktreeHelper')}
+                            </p>
+                          </div>
+                          <Switch
+                            id="task-worktree-switch"
+                            checked={field.state.value}
+                            onCheckedChange={(checked) =>
+                              field.handleChange(checked)
+                            }
+                            disabled={isSubmitting}
+                            className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
+                            aria-label={t('createAttemptDialog.useWorktree')}
+                          />
+                        </div>
+                      )}
+                    </form.Field>
                   </div>
                 );
               }}

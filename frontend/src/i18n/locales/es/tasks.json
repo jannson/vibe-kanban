@@ -178,6 +178,8 @@
     "baseBranch": "Base branch",
     "creating": "Creating...",
     "description": "Start a new attempt with a coding agent. A git worktree and task branch will be created.",
+    "useWorktree": "Use worktree (override default)",
+    "useWorktreeHelper": "Create an isolated worktree instead of using the original repositories.",
     "error": "Failed to create attempt. Please try again.",
     "loadingBranches": "Loading branches...",
     "selectBranch": "Select branch",

@@ -39,27 +39,29 @@ if [ "${BACKEND_HOST}" = "0.0.0.0" ]; then
 fi
 export BACKEND_HOST
 
-# Default workspace dir for original repositories (see dev_assets/config.json).
-# Override with `WORKSPACE_DIR=/path/to/workspace scripts/run-dev.sh`.
-WORKSPACE_DIR="${WORKSPACE_DIR:-/projects/workspace-linkease-ubuntu/sdk-share}"
+# Default workspace root for original repositories (see dev_assets/config.json).
+# Override with `WORKSPACE_ROOT=/path/to/workspace scripts/run-dev.sh`.
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-/projects/workspace-linkease-ubuntu/sdk-share}"
 
-# Use original repositories instead of worktrees (see config.json workspace_dir).
+# Use original repositories instead of worktrees (see config.json workspace roots).
 export VIBE_KANBAN_USE_ORIGINAL_REPOS="${VIBE_KANBAN_USE_ORIGINAL_REPOS:-1}"
+# Default worktree base path (used when original repos mode is disabled).
+export VIBE_KANBAN_WORKTREE_PATH="${VIBE_KANBAN_WORKTREE_PATH:-/projects/workspace-linkease-ubuntu/worktree-repos}"
 
-# Ensure config.json points at the desired workspace_dir in dev (debug_assertions).
+# Ensure config.json points at the desired workspace root in dev (debug_assertions).
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_CONFIG_PATH="${REPO_ROOT}/dev_assets/config.json"
 if [ -f "${DEV_CONFIG_PATH}" ]; then
   if ! command -v node >/dev/null 2>&1; then
-    echo "node not found; unable to update ${DEV_CONFIG_PATH} workspace_dir." >&2
+    echo "node not found; unable to update ${DEV_CONFIG_PATH} workspace_root." >&2
     exit 1
   fi
 
-  node - "${DEV_CONFIG_PATH}" "${WORKSPACE_DIR}" <<'NODE'
+  node - "${DEV_CONFIG_PATH}" "${WORKSPACE_ROOT}" <<'NODE'
 const fs = require('node:fs');
 
 const configPath = process.argv[2];
-const workspaceDir = process.argv[3];
+const workspaceRoot = process.argv[3];
 
 const raw = fs.readFileSync(configPath, 'utf8');
 let json;
@@ -70,11 +72,15 @@ try {
   process.exit(1);
 }
 
-if (json.workspace_dir !== workspaceDir) {
-  json.workspace_dir = workspaceDir;
-  fs.writeFileSync(configPath, JSON.stringify(json, null, 2) + '\n');
-  console.log(`Updated workspace_dir in ${configPath} -> ${workspaceDir}`);
+json.default_workspace_root = workspaceRoot;
+const roots = Array.isArray(json.workspace_roots) ? json.workspace_roots : [];
+if (!roots.includes(workspaceRoot)) {
+  roots.unshift(workspaceRoot);
 }
+json.workspace_roots = roots;
+
+fs.writeFileSync(configPath, JSON.stringify(json, null, 2) + '\n');
+console.log(`Updated workspace_root in ${configPath} -> ${workspaceRoot}`);
 NODE
 fi
 

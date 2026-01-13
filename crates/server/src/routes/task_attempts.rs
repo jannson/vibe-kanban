@@ -108,6 +108,7 @@ pub struct CreateTaskAttemptBody {
     pub task_id: Uuid,
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<WorkspaceRepoInput>,
+    pub use_original_repos: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
@@ -123,6 +124,10 @@ pub struct RunAgentSetupRequest {
 
 #[derive(Debug, Serialize, TS)]
 pub struct RunAgentSetupResponse {}
+
+fn default_use_original_repos() -> bool {
+    std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok()
+}
 
 #[axum::debug_handler]
 pub async fn create_task_attempt(
@@ -152,6 +157,9 @@ pub async fn create_task_attempt(
         .as_ref()
         .filter(|dir| !dir.is_empty())
         .cloned();
+    let use_original_repos = payload
+        .use_original_repos
+        .unwrap_or_else(default_use_original_repos);
 
     let attempt_id = Uuid::new_v4();
     let git_branch_name = deployment
@@ -164,6 +172,7 @@ pub async fn create_task_attempt(
         &CreateWorkspace {
             branch: git_branch_name.clone(),
             agent_working_dir,
+            use_original_repos: Some(use_original_repos),
         },
         attempt_id,
         payload.task_id,

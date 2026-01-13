@@ -276,6 +276,8 @@
   "createAttemptDialog": {
     "title": "Create Attempt",
     "description": "Start a new attempt with a coding agent. A git worktree and task branch will be created.",
+    "useWorktree": "Use worktree (override default)",
+    "useWorktreeHelper": "Create an isolated worktree instead of using the original repositories.",
     "baseBranch": "Base branch",
     "loadingBranches": "Loading branches...",
     "selectBranch": "Select branch",

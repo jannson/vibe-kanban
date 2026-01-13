@@ -223,10 +223,7 @@ pub async fn create_project(
     let repo_count = payload.repositories.len();
     if payload.workspace_root.is_none() {
         let config = deployment.config().read().await;
-        payload.workspace_root = config
-            .default_workspace_root
-            .clone()
-            .or_else(|| config.workspace_dir.clone());
+        payload.workspace_root = config.default_workspace_root.clone();
     }
 
     match deployment

@@ -291,11 +291,6 @@ impl WorkspaceManager {
             );
             return;
         }
-        if std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok() {
-            debug!("Orphan workspace cleanup is disabled for original repo mode");
-            return;
-        }
-
         let workspace_base_dir = Self::get_workspace_base_dir();
         if !workspace_base_dir.exists() {
             debug!(

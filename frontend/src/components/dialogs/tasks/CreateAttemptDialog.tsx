@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import RepoBranchSelector from '@/components/tasks/RepoBranchSelector';
 import { ExecutorProfileSelector } from '@/components/settings';
 import { useAttemptCreation } from '@/hooks/useAttemptCreation';
@@ -50,6 +52,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
 
     const [userSelectedProfile, setUserSelectedProfile] =
       useState<ExecutorProfileId | null>(null);
+    const [useWorktreeOverride, setUseWorktreeOverride] = useState(false);
 
     const { data: attempts = [], isLoading: isLoadingAttempts } =
       useTaskAttemptsWithSessions(taskId, {
@@ -94,6 +97,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     useEffect(() => {
       if (!modal.visible) {
         setUserSelectedProfile(null);
+        setUseWorktreeOverride(false);
         resetBranchSelection();
       }
     }, [modal.visible, resetBranchSelection]);
@@ -152,6 +156,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
         await createAttempt({
           profile: effectiveProfile,
           repos,
+          useOriginalRepos: useWorktreeOverride ? false : null,
         });
 
         modal.hide();
@@ -198,6 +203,27 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
               isLoading={isLoadingBranches}
               className="space-y-2"
             />
+            <div className="flex items-start justify-between gap-3 rounded-md border border-border/60 p-3">
+              <div className="space-y-1">
+                <Label
+                  htmlFor="attempt-worktree-switch"
+                  className="text-sm font-medium"
+                >
+                  {t('createAttemptDialog.useWorktree')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('createAttemptDialog.useWorktreeHelper')}
+                </p>
+              </div>
+              <Switch
+                id="attempt-worktree-switch"
+                checked={useWorktreeOverride}
+                onCheckedChange={setUseWorktreeOverride}
+                disabled={isCreating}
+                className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
+                aria-label={t('createAttemptDialog.useWorktree')}
+              />
+            </div>
 
             {error && (
               <div className="text-sm text-destructive">
