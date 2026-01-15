@@ -45,6 +45,13 @@
       "hide": "Ocultar plan",
       "show": "Mostrar plan"
     },
+    "logSection": "Ejecución {{index}}",
+    "agentRun": "Ejecución del agente {{index}}",
+    "setupScript": "Script de configuración",
+    "cleanupScript": "Script de limpieza",
+    "toolInstallScript": "Script de instalación de herramientas",
+    "systemLog": "Sistema",
+    "loadEarlierRuns": "Cargar ejecuciones anteriores",
     "result": "Resultado",
     "toolDetailsToggle": {
       "hide": "Ocultar detalles",

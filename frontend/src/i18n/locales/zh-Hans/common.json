@@ -30,6 +30,13 @@
       "show": "显示计划",
       "hide": "隐藏计划"
     },
+    "logSection": "第 {{index}} 次运行",
+    "agentRun": "Agent 运行 {{index}}",
+    "setupScript": "安装脚本",
+    "cleanupScript": "清理脚本",
+    "toolInstallScript": "工具安装脚本",
+    "systemLog": "系统",
+    "loadEarlierRuns": "加载更早运行记录",
     "toolDetailsToggle": {
       "show": "显示详情",
       "hide": "隐藏详情"

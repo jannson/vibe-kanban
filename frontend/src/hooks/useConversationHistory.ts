@@ -10,7 +10,13 @@ import {
   Workspace,
 } from 'shared/types';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { streamJsonPatchEntries } from '@/utils/streamJsonPatchEntries';
 
 export type PatchTypeWithKey = PatchType & {
@@ -45,7 +51,11 @@ interface UseConversationHistoryParams {
   onEntriesUpdated: OnEntriesUpdated;
 }
 
-interface UseConversationHistoryResult {}
+interface UseConversationHistoryResult {
+  loadOlderEntries: () => Promise<boolean>;
+  hasMoreHistoric: boolean;
+  isLoadingHistoric: boolean;
+}
 
 const MIN_INITIAL_ENTRIES = 10;
 const REMAINING_BATCH_SIZE = 50;
@@ -101,12 +111,24 @@ export const useConversationHistory = ({
   const loadedInitialEntries = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
+  const [hasMoreHistoric, setHasMoreHistoric] = useState(false);
+  const [isLoadingHistoric, setIsLoadingHistoric] = useState(false);
+
+  const updateHasMoreHistoric = useCallback(() => {
+    const remaining = executionProcesses.current.some(
+      (process) =>
+        process.status !== ExecutionProcessStatus.running &&
+        !displayedExecutionProcesses.current[process.id]
+    );
+    setHasMoreHistoric((prev) => (prev === remaining ? prev : remaining));
+  }, []);
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
   ) => {
     const state = displayedExecutionProcesses.current;
     mutator(state);
+    updateHasMoreHistoric();
   };
   useEffect(() => {
     onEntriesUpdatedRef.current = onEntriesUpdated;
@@ -121,6 +143,10 @@ export const useConversationHistory = ({
         ep.run_reason === 'codingagent'
     );
   }, [executionProcessesRaw]);
+
+  useEffect(() => {
+    updateHasMoreHistoric();
+  }, [executionProcessesRaw, updateHasMoreHistoric]);
 
   const loadEntriesForHistoricExecutionProcess = (
     executionProcess: ExecutionProcess
@@ -601,15 +627,7 @@ export const useConversationHistory = ({
       emitEntries(displayedExecutionProcesses.current, 'initial', false);
       loadedInitialEntries.current = true;
 
-      // Then load the remaining in batches
-      while (
-        !cancelled &&
-        (await loadRemainingEntriesInBatches(REMAINING_BATCH_SIZE))
-      ) {
-        if (cancelled) return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      emitEntries(displayedExecutionProcesses.current, 'historic', false);
+      updateHasMoreHistoric();
     })();
     return () => {
       cancelled = true;
@@ -672,6 +690,7 @@ export const useConversationHistory = ({
           delete state[id];
         });
       });
+      updateHasMoreHistoric();
     }
   }, [attempt.id, idListKey, executionProcessesRaw]);
 
@@ -681,7 +700,24 @@ export const useConversationHistory = ({
     loadedInitialEntries.current = false;
     streamingProcessIdsRef.current.clear();
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
+    setHasMoreHistoric(false);
+    setIsLoadingHistoric(false);
   }, [attempt.id, emitEntries]);
 
-  return {};
+  const loadOlderEntries = useCallback(async () => {
+    if (isLoadingHistoric) return false;
+    setIsLoadingHistoric(true);
+    const updated = await loadRemainingEntriesInBatches(REMAINING_BATCH_SIZE);
+    emitEntries(displayedExecutionProcesses.current, 'historic', false);
+    updateHasMoreHistoric();
+    setIsLoadingHistoric(false);
+    return updated;
+  }, [
+    emitEntries,
+    isLoadingHistoric,
+    loadRemainingEntriesInBatches,
+    updateHasMoreHistoric,
+  ]);
+
+  return { loadOlderEntries, hasMoreHistoric, isLoadingHistoric };
 };

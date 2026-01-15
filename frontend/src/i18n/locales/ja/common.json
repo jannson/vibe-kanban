@@ -45,6 +45,13 @@
       "hide": "計画を非表示",
       "show": "計画を表示"
     },
+    "logSection": "実行 {{index}}",
+    "agentRun": "エージェント実行 {{index}}",
+    "setupScript": "セットアップスクリプト",
+    "cleanupScript": "クリーンアップスクリプト",
+    "toolInstallScript": "ツールインストールスクリプト",
+    "systemLog": "システム",
+    "loadEarlierRuns": "以前の実行を読み込む",
     "result": "結果",
     "toolDetailsToggle": {
       "hide": "詳細を非表示",

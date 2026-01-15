@@ -1,10 +1,5 @@
-import AutoSizer from 'react-virtualized-auto-sizer';
-import type { HTMLAttributes } from 'react';
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  VariableSizeList,
-  ListChildComponentProps,
-} from 'react-window';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import DisplayConversationEntry from '../NormalizedConversation/DisplayConversationEntry';
 import { useEntries } from '@/contexts/EntriesContext';
@@ -17,31 +12,33 @@ import { Loader2 } from 'lucide-react';
 import { TaskWithAttemptStatus } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { ApprovalFormProvider } from '@/contexts/ApprovalFormContext';
+import { Button } from '@/components/ui/button';
+import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
 
 interface VirtualizedListProps {
   attempt: WorkspaceWithSession;
   task?: TaskWithAttemptStatus;
 }
 
-interface MessageListContext {
-  attempt: WorkspaceWithSession;
-  task?: TaskWithAttemptStatus;
+interface MessageGroup {
+  id: string;
+  entries: PatchTypeWithKey[];
 }
 
-const ESTIMATED_ROW_HEIGHT = 72;
+const DEFAULT_OPEN_COUNT = 2;
+const BOTTOM_SCROLL_THRESHOLD = 48;
+const SYSTEM_GROUP_ID = '__system__';
 
 const renderItemContent = (
   data: PatchTypeWithKey,
-  context: MessageListContext
+  attempt: WorkspaceWithSession,
+  task?: TaskWithAttemptStatus
 ) => {
-  const attempt = context.attempt;
-  const task = context.task;
-
   if (data.type === 'STDOUT') {
-    return <p>{data.content}</p>;
+    return <pre className="whitespace-pre-wrap">{data.content}</pre>;
   }
   if (data.type === 'STDERR') {
-    return <p>{data.content}</p>;
+    return <pre className="whitespace-pre-wrap text-destructive">{data.content}</pre>;
   }
   if (data.type === 'NORMALIZED_ENTRY') {
     return (
@@ -58,65 +55,85 @@ const renderItemContent = (
   return null;
 };
 
-const InnerElement = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
-  ({ style, ...rest }, ref) => (
-    <div
-      ref={ref}
-      style={{ ...style, paddingTop: 8, paddingBottom: 8 }}
-      {...rest}
-    />
-  )
-);
-InnerElement.displayName = 'VirtualizedListInner';
+const buildGroups = (entries: PatchTypeWithKey[]): MessageGroup[] => {
+  const order: string[] = [];
+  const groups = new Map<string, PatchTypeWithKey[]>();
 
-interface RowData {
-  items: PatchTypeWithKey[];
-  context: MessageListContext;
-  setSize: (index: number, size: number) => void;
-}
+  for (const entry of entries) {
+    const id = entry.executionProcessId || SYSTEM_GROUP_ID;
+    if (!groups.has(id)) {
+      groups.set(id, []);
+      order.push(id);
+    }
+    groups.get(id)!.push(entry);
+  }
 
-const Row = ({ index, style, data }: ListChildComponentProps<RowData>) => {
-  const item = data.items[index];
-  const rowRef = useRef<HTMLDivElement | null>(null);
+  return order.map((id) => ({ id, entries: groups.get(id)! }));
+};
 
-  useEffect(() => {
-    if (!rowRef.current) return;
-    const node = rowRef.current;
+const formatProcessLabel = (
+  t: (key: string, options?: Record<string, unknown>) => string,
+  processType: string | null,
+  scriptContext: string | null,
+  index: number,
+  isSystem: boolean
+) => {
+  if (isSystem) return t('conversation.systemLog');
+  if (processType === 'ScriptRequest') {
+    if (scriptContext === 'SetupScript') return t('conversation.setupScript');
+    if (scriptContext === 'CleanupScript') return t('conversation.cleanupScript');
+    if (scriptContext === 'ToolInstallScript')
+      return t('conversation.toolInstallScript');
+  }
+  if (
+    processType === 'CodingAgentInitialRequest' ||
+    processType === 'CodingAgentFollowUpRequest'
+  ) {
+    return t('conversation.agentRun', { index });
+  }
+  return t('conversation.logSection', { index });
+};
 
-    const updateSize = () => {
-      const next = node.getBoundingClientRect().height;
-      data.setSize(index, next);
-    };
+const getEntryPreview = (entry: PatchTypeWithKey): string => {
+  if (entry.type === 'STDOUT' || entry.type === 'STDERR') {
+    return entry.content.trim();
+  }
+  if (entry.type === 'NORMALIZED_ENTRY') {
+    return entry.content.content?.trim?.() ?? '';
+  }
+  return '';
+};
 
-    updateSize();
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [data, index, item]);
-
-  return (
-    <div style={{ ...style, width: '100%' }}>
-      <div ref={rowRef} className="px-4">
-        {renderItemContent(item, data.context)}
-      </div>
-    </div>
-  );
+const buildGroupPreview = (entries: PatchTypeWithKey[]): string => {
+  for (const entry of entries) {
+    const text = getEntryPreview(entry);
+    if (text) return text.split(/\r?\n/)[0].trim();
+  }
+  return '';
 };
 
 const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
+  const { t } = useTranslation('common');
   const [channelData, setChannelData] = useState<PatchTypeWithKey[] | null>(
     null
   );
   const [loading, setLoading] = useState(true);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const { setEntries, reset } = useEntries();
-  const listRef = useRef<VariableSizeList>(null);
-  const sizeMapRef = useRef<Record<number, number>>({});
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollToBottomRef = useRef(false);
+  const isPinnedToBottomRef = useRef(true);
+  const pendingScrollRestoreRef = useRef<{
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+
+  const { executionProcessesByIdVisible } = useExecutionProcessesContext();
 
   useEffect(() => {
     setLoading(true);
     setChannelData(null);
+    setOpenGroups({});
     reset();
   }, [attempt.id, reset]);
 
@@ -125,70 +142,166 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     _addType: AddEntryType,
     newLoading: boolean
   ) => {
-    scrollToBottomRef.current = true;
-
     setChannelData(newEntries);
     setEntries(newEntries);
+
+    if (isPinnedToBottomRef.current) {
+      scrollToBottomRef.current = true;
+    }
 
     if (loading) {
       setLoading(newLoading);
     }
   };
 
-  useConversationHistory({ attempt, onEntriesUpdated });
+  const { loadOlderEntries, hasMoreHistoric, isLoadingHistoric } =
+    useConversationHistory({
+      attempt,
+      onEntriesUpdated,
+    });
 
-  const messageListContext = useMemo(
-    () => ({ attempt, task }),
-    [attempt, task]
+  const groups = useMemo(
+    () => buildGroups(channelData ?? []),
+    [channelData]
   );
-  const items = channelData ?? [];
 
   useEffect(() => {
-    sizeMapRef.current = {};
-    listRef.current?.resetAfterIndex(0, true);
-  }, [attempt.id]);
+    if (groups.length === 0) return;
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      groups.forEach((group, index) => {
+        if (next[group.id] === undefined) {
+          const defaultOpen =
+            index >= groups.length - DEFAULT_OPEN_COUNT ||
+            executionProcessesByIdVisible[group.id]?.status === 'running';
+          next[group.id] = defaultOpen;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [groups, executionProcessesByIdVisible]);
 
-  useEffect(() => {
-    if (!items.length) return;
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    if (pendingScrollRestoreRef.current) {
+      const { scrollHeight, scrollTop } = pendingScrollRestoreRef.current;
+      const delta = container.scrollHeight - scrollHeight;
+      container.scrollTop = scrollTop + delta;
+      pendingScrollRestoreRef.current = null;
+      return;
+    }
+
     if (scrollToBottomRef.current) {
-      listRef.current?.scrollToItem(items.length - 1, 'end');
+      container.scrollTop = container.scrollHeight;
       scrollToBottomRef.current = false;
     }
-  }, [items.length]);
+  }, [groups.length]);
 
-  const setSize = (index: number, size: number) => {
-    const current = sizeMapRef.current[index];
-    if (current === size) return;
-    sizeMapRef.current[index] = size;
-    listRef.current?.resetAfterIndex(index);
+  const handleLoadEarlier = async () => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      pendingScrollRestoreRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+    }
+    await loadOlderEntries();
   };
-
-  const getItemSize = (index: number) =>
-    sizeMapRef.current[index] ?? ESTIMATED_ROW_HEIGHT;
 
   return (
     <ApprovalFormProvider>
-      <div className="flex-1">
-        <AutoSizer>
-          {({ height, width }) => (
-            <VariableSizeList
-              ref={listRef}
-              height={height}
-              width={width}
-              itemCount={items.length}
-              itemSize={getItemSize}
-              estimatedItemSize={ESTIMATED_ROW_HEIGHT}
-              itemData={{
-                items,
-                context: messageListContext,
-                setSize,
-              }}
-              innerElementType={InnerElement}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {hasMoreHistoric && (
+          <div className="shrink-0 flex items-center justify-center py-2 border-b border-dashed">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isLoadingHistoric}
+              onClick={handleLoadEarlier}
             >
-              {Row}
-            </VariableSizeList>
-          )}
-        </AutoSizer>
+              {isLoadingHistoric
+                ? t('states.loading')
+                : t('conversation.loadEarlierRuns')}
+            </Button>
+          </div>
+        )}
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 min-h-0 overflow-y-auto"
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            const distanceToBottom =
+              target.scrollHeight - (target.scrollTop + target.clientHeight);
+            isPinnedToBottomRef.current =
+              distanceToBottom <= BOTTOM_SCROLL_THRESHOLD;
+          }}
+        >
+          <div className="py-3 space-y-3">
+            {groups.map((group, index) => {
+              const process = executionProcessesByIdVisible[group.id];
+              const isSystem = group.id === SYSTEM_GROUP_ID;
+              const processType = process?.executor_action.typ.type ?? null;
+              const scriptContext =
+                process?.executor_action.typ.type === 'ScriptRequest'
+                  ? process.executor_action.typ.context
+                  : null;
+              const label = formatProcessLabel(
+                t,
+                processType,
+                scriptContext,
+                index + 1,
+                isSystem
+              );
+              const preview = buildGroupPreview(group.entries);
+              const status = process?.status ?? '';
+              const createdAt = process?.created_at
+                ? new Date(process.created_at).toLocaleString()
+                : '';
+              const open = openGroups[group.id] ?? false;
+
+              return (
+                <details
+                  key={group.id}
+                  className="mx-auto w-full max-w-[50rem] border border-dashed rounded-sm bg-background"
+                  open={open}
+                  onToggle={(event) => {
+                    const target = event.currentTarget as HTMLDetailsElement;
+                    setOpenGroups((prev) => ({
+                      ...prev,
+                      [group.id]: target.open,
+                    }));
+                  }}
+                >
+                  <summary className="cursor-pointer select-none px-3 py-2 text-sm flex items-center justify-between gap-2">
+                    <span className="min-w-0 flex-1 flex flex-col">
+                      <span className="font-medium truncate">{label}</span>
+                      {preview && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {preview}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {status}
+                      {createdAt ? ` · ${createdAt}` : ''}
+                    </span>
+                  </summary>
+                  <div className="border-t border-dashed">
+                    {group.entries.map((entry) => (
+                      <div key={entry.patchKey}>
+                        {renderItemContent(entry, attempt, task)}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </div>
       </div>
       {loading && (
         <div className="float-left top-0 left-0 w-full h-full bg-primary flex flex-col gap-2 justify-center items-center">

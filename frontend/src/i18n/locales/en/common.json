@@ -30,6 +30,13 @@
       "show": "Show plan",
       "hide": "Hide plan"
     },
+    "logSection": "Run {{index}}",
+    "agentRun": "Agent run {{index}}",
+    "setupScript": "Setup script",
+    "cleanupScript": "Cleanup script",
+    "toolInstallScript": "Tool install script",
+    "systemLog": "System",
+    "loadEarlierRuns": "Load earlier runs",
     "toolDetailsToggle": {
       "show": "Show details",
       "hide": "Hide details"

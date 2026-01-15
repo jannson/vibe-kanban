@@ -45,6 +45,13 @@
       "hide": "계획 숨기기",
       "show": "계획 보기"
     },
+    "logSection": "실행 {{index}}",
+    "agentRun": "에이전트 실행 {{index}}",
+    "setupScript": "설정 스크립트",
+    "cleanupScript": "정리 스크립트",
+    "toolInstallScript": "도구 설치 스크립트",
+    "systemLog": "시스템",
+    "loadEarlierRuns": "이전 실행 불러오기",
     "result": "결과",
     "toolDetailsToggle": {
       "hide": "세부 정보 숨기기",
