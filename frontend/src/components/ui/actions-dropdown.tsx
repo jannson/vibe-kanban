@@ -23,6 +23,7 @@ import { ReassignDialog } from '@/components/dialogs/tasks/ReassignDialog';
 import { StopShareTaskDialog } from '@/components/dialogs/tasks/StopShareTaskDialog';
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
+import { useLogsCollapse } from '@/contexts/LogsCollapseContext';
 
 import { useNavigate } from 'react-router-dom';
 import type { SharedTaskRecord } from '@/hooks/useProjectTasks';
@@ -44,6 +45,7 @@ export function ActionsDropdown({
   const openInEditor = useOpenInEditor(attempt?.id);
   const navigate = useNavigate();
   const { userId, isSignedIn } = useAuth();
+  const logsCollapse = useLogsCollapse();
 
   const hasAttemptActions = Boolean(attempt);
   const hasTaskActions = Boolean(task);
@@ -85,6 +87,11 @@ export function ActionsDropdown({
     e.stopPropagation();
     if (!attempt?.id) return;
     ViewProcessesDialog.show({ attemptId: attempt.id });
+  };
+
+  const handleCollapseAllRuns = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    logsCollapse?.collapseAllRuns();
   };
 
   const handleViewRelatedTasks = (e: React.MouseEvent) => {
@@ -195,6 +202,11 @@ export function ActionsDropdown({
               >
                 {t('actionsMenu.viewProcesses')}
               </DropdownMenuItem>
+              {logsCollapse && (
+                <DropdownMenuItem onClick={handleCollapseAllRuns}>
+                  Collapse all agent runs
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 disabled={!attempt?.id}
                 onClick={handleViewRelatedTasks}

@@ -83,6 +83,7 @@ import {
   SharedTaskDetails,
   QueueStatus,
   PrCommentsResponse,
+  CommitTaskAttemptRequest,
   MergeTaskAttemptRequest,
   PushTaskAttemptRequest,
   RepoBranchStatus,
@@ -607,6 +608,20 @@ export const attemptsApi = {
   ): Promise<void> => {
     const response = await makeRequest(
       `/api/task-attempts/${attemptId}/merge`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+    return handleApiResponse<void>(response);
+  },
+
+  commit: async (
+    attemptId: string,
+    data: CommitTaskAttemptRequest
+  ): Promise<void> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/commit`,
       {
         method: 'POST',
         body: JSON.stringify(data),

@@ -169,6 +169,9 @@ export function NextActionCard({
           <span className="font-semibold flex-1">
             {t('attempt.labels.summaryAndActions')}
           </span>
+          <span className="text-xs opacity-80">
+            {t('attempt.labels.uncommitted')}
+          </span>
         </div>
 
         {/* Display setup help text when setup is needed */}

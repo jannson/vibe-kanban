@@ -10,13 +10,18 @@ import {
 type Props = {
   onCmdEnter?: () => void;
   onShiftCmdEnter?: () => void;
+  onEnter?: () => void;
 };
 
-export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
+export function KeyboardCommandsPlugin({
+  onCmdEnter,
+  onShiftCmdEnter,
+  onEnter,
+}: Props) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    if (!onCmdEnter && !onShiftCmdEnter) return;
+    if (!onCmdEnter && !onShiftCmdEnter && !onEnter) return;
 
     // Handle the modifier command to trigger the callbacks
     const unregisterModifier = editor.registerCommand(
@@ -49,7 +54,16 @@ export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
     const unregisterEnter = editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
-        if (event && (event.metaKey || event.ctrlKey)) {
+        if (!event) return false;
+
+        if (!event.metaKey && !event.ctrlKey && !event.shiftKey && onEnter) {
+          event.preventDefault();
+          event.stopPropagation();
+          onEnter();
+          return true;
+        }
+
+        if (event.metaKey || event.ctrlKey) {
           return true; // Mark as handled, preventing line break insertion
         }
         return false;
@@ -61,7 +75,7 @@ export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
       unregisterModifier();
       unregisterEnter();
     };
-  }, [editor, onCmdEnter, onShiftCmdEnter]);
+  }, [editor, onCmdEnter, onShiftCmdEnter, onEnter]);
 
   return null;
 }

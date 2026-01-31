@@ -74,6 +74,9 @@ function GitActionsDialogContent({
           )}
         </div>
       )}
+      <div className="text-xs text-muted-foreground">
+        {t('git.actions.uncommittedHint')}
+      </div>
       {gitError && (
         <div className="p-3 border border-destructive rounded text-destructive text-sm">
           {gitError}

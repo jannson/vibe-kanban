@@ -220,6 +220,9 @@ function DiffsPanelContent({
               </span>{' '}
               <span className="text-red-600 dark:text-red-500">-{deleted}</span>
             </span>
+            <span className="ml-2 text-xs text-muted-foreground">
+              {t('attempt.labels.uncommitted')}
+            </span>
           </div>
         </NewCardHeader>
       )}

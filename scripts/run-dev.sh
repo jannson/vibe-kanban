@@ -40,12 +40,10 @@ if [ "${BACKEND_HOST}" = "0.0.0.0" ]; then
 fi
 export BACKEND_HOST
 
-# Default workspace root for original repositories (see dev_assets/config.json).
-# Override with `WORKSPACE_ROOT=/path/to/workspace scripts/run-dev.sh`.
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-/projects/workspace-linkease-ubuntu/sdk-share}"
-
 # Use original repositories instead of worktrees (see config.json workspace roots).
 export VIBE_KANBAN_USE_ORIGINAL_REPOS="${VIBE_KANBAN_USE_ORIGINAL_REPOS:-1}"
+# Enable auto-commit for dev runs unless explicitly disabled.
+export VIBE_KANBAN_AUTO_COMMIT="${VIBE_KANBAN_AUTO_COMMIT:-1}"
 # Default worktree base path (used when original repos mode is disabled).
 export VIBE_KANBAN_WORKTREE_PATH="${VIBE_KANBAN_WORKTREE_PATH:-/projects/workspace-linkease-ubuntu/worktree-repos}"
 
@@ -56,46 +54,14 @@ export PROXY_LISTEN_ADDR="${PROXY_LISTEN_ADDR:-:3002}"
 export FRONTEND_UPSTREAM="${FRONTEND_UPSTREAM:-http://127.0.0.1:${FRONTEND_PORT}}"
 export BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://127.0.0.1:${BACKEND_PORT}}"
 
-# Ensure config.json points at the desired workspace root in dev (debug_assertions).
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEV_CONFIG_PATH="${REPO_ROOT}/dev_assets/config.json"
-if [ -f "${DEV_CONFIG_PATH}" ]; then
-  if ! command -v node >/dev/null 2>&1; then
-    echo "node not found; unable to update ${DEV_CONFIG_PATH} workspace_root." >&2
-    exit 1
-  fi
-
-  node - "${DEV_CONFIG_PATH}" "${WORKSPACE_ROOT}" <<'NODE'
-const fs = require('node:fs');
-
-const configPath = process.argv[2];
-const workspaceRoot = process.argv[3];
-
-const raw = fs.readFileSync(configPath, 'utf8');
-let json;
-try {
-  json = JSON.parse(raw);
-} catch (e) {
-  console.error(`Failed to parse ${configPath} as JSON: ${e.message}`);
-  process.exit(1);
-}
-
-json.default_workspace_root = workspaceRoot;
-const roots = Array.isArray(json.workspace_roots) ? json.workspace_roots : [];
-if (!roots.includes(workspaceRoot)) {
-  roots.unshift(workspaceRoot);
-}
-json.workspace_roots = roots;
-
-fs.writeFileSync(configPath, JSON.stringify(json, null, 2) + '\n');
-console.log(`Updated workspace_root in ${configPath} -> ${workspaceRoot}`);
-NODE
-fi
-
 # Avoid global git URL rewrites (https -> ssh) when fetching dependencies.
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Vibe Kanban}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-noreply@vibekanban.com}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Vibe Kanban}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-noreply@vibekanban.com}"
 
 PNPM_CMD=(pnpm)
 if ! command -v pnpm >/dev/null 2>&1; then

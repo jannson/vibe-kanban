@@ -14,6 +14,8 @@ import type { WorkspaceWithSession } from '@/types/attempt';
 import { ApprovalFormProvider } from '@/contexts/ApprovalFormContext';
 import { Button } from '@/components/ui/button';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
+import { useLogsCollapse } from '@/contexts/LogsCollapseContext';
+import { cn } from '@/lib/utils';
 
 interface VirtualizedListProps {
   attempt: WorkspaceWithSession;
@@ -89,7 +91,7 @@ const formatProcessLabel = (
     processType === 'CodingAgentInitialRequest' ||
     processType === 'CodingAgentFollowUpRequest'
   ) {
-    return t('conversation.agentRun', { index });
+    return `会话 #${index}`;
   }
   return t('conversation.logSection', { index });
 };
@@ -123,12 +125,14 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollToBottomRef = useRef(false);
   const isPinnedToBottomRef = useRef(true);
+  const groupIdsRef = useRef<string[]>([]);
   const pendingScrollRestoreRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
 
   const { executionProcessesByIdVisible } = useExecutionProcessesContext();
+  const logsCollapse = useLogsCollapse();
 
   useEffect(() => {
     setLoading(true);
@@ -166,6 +170,25 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   );
 
   useEffect(() => {
+    groupIdsRef.current = groups.map((group) => group.id);
+  }, [groups]);
+
+  useEffect(() => {
+    if (!logsCollapse) return;
+    const collapseAllRuns = () => {
+      setOpenGroups((prev) => {
+        const next = { ...prev };
+        for (const id of groupIdsRef.current) {
+          next[id] = false;
+        }
+        return next;
+      });
+    };
+    logsCollapse.setCollapseHandler(collapseAllRuns);
+    return () => logsCollapse.setCollapseHandler(null);
+  }, [logsCollapse]);
+
+  useEffect(() => {
     if (groups.length === 0) return;
     setOpenGroups((prev) => {
       const next = { ...prev };
@@ -201,6 +224,8 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     }
   }, [groups.length]);
 
+  const [atTop, setAtTop] = useState(true);
+
   const handleLoadEarlier = async () => {
     const container = scrollContainerRef.current;
     if (container) {
@@ -216,7 +241,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     <ApprovalFormProvider>
       <div className="flex-1 min-h-0 flex flex-col">
         {hasMoreHistoric && (
-          <div className="shrink-0 flex items-center justify-center py-2 border-b border-dashed">
+          <div
+            className={cn(
+              'shrink-0 border-b border-dashed py-1 text-center text-xs text-muted-foreground',
+              atTop ? '' : 'hidden'
+            )}
+          >
             <Button
               variant="ghost"
               size="sm"
@@ -238,6 +268,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
               target.scrollHeight - (target.scrollTop + target.clientHeight);
             isPinnedToBottomRef.current =
               distanceToBottom <= BOTTOM_SCROLL_THRESHOLD;
+            setAtTop(target.scrollTop <= 8);
           }}
         >
           <div className="py-3 space-y-3">
@@ -249,11 +280,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
                 process?.executor_action.typ.type === 'ScriptRequest'
                   ? process.executor_action.typ.context
                   : null;
+              const agentRunIndex = process?.agent_run_index;
               const label = formatProcessLabel(
                 t,
                 processType,
                 scriptContext,
-                index + 1,
+                Number(agentRunIndex ?? index + 1),
                 isSystem
               );
               const preview = buildGroupPreview(group.entries);

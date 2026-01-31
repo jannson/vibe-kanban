@@ -317,6 +317,12 @@ pub struct MergeTaskAttemptRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, TS)]
+pub struct CommitTaskAttemptRequest {
+    pub repo_id: Uuid,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct PushTaskAttemptRequest {
     pub repo_id: Uuid,
 }
@@ -430,6 +436,64 @@ pub async fn merge_task_attempt(
             }),
         )
         .await;
+
+    Ok(ResponseJson(ApiResponse::success(())))
+}
+
+#[axum::debug_handler]
+pub async fn commit_task_attempt(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+    Json(request): Json<CommitTaskAttemptRequest>,
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    let workspace_repo =
+        WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
+            .await?
+            .ok_or(RepoError::NotFound)?;
+
+    let repo = Repo::find_by_id(pool, workspace_repo.repo_id)
+        .await?
+        .ok_or(RepoError::NotFound)?;
+
+    let container_ref = deployment
+        .container()
+        .ensure_container_exists(&workspace)
+        .await?;
+    let workspace_path = Path::new(&container_ref);
+    let worktree_path = workspace_path.join(repo.name);
+
+    let commit_message = if let Some(message) = request.message
+        && !message.trim().is_empty()
+    {
+        message
+    } else {
+        let task = workspace
+            .parent_task(pool)
+            .await?
+            .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))?;
+        let task_uuid_str = task.id.to_string();
+        let first_uuid_section = task_uuid_str
+            .split('-')
+            .next()
+            .unwrap_or(&task_uuid_str);
+
+        let mut message = format!("{} (vibe-kanban {})", task.title, first_uuid_section);
+
+        if let Some(description) = &task.description
+            && !description.trim().is_empty()
+        {
+            message.push_str("\n\n");
+            message.push_str(description);
+        }
+        message
+    };
+
+    let committed = deployment.git().commit(&worktree_path, &commit_message)?;
+    if !committed {
+        return Err(ApiError::BadRequest("No changes to commit".to_string()));
+    }
 
     Ok(ResponseJson(ApiResponse::success(())))
 }
@@ -1501,6 +1565,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/run-cleanup-script", post(run_cleanup_script))
         .route("/branch-status", get(get_task_attempt_branch_status))
         .route("/diff/ws", get(stream_task_attempt_diff_ws))
+        .route("/commit", post(commit_task_attempt))
         .route("/merge", post(merge_task_attempt))
         .route("/push", post(push_task_attempt_branch))
         .route("/push/force", post(force_push_task_attempt_branch))

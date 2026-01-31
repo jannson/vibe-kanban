@@ -217,14 +217,10 @@ async fn apply_remote_project_link(
 
 pub async fn create_project(
     State(deployment): State<DeploymentImpl>,
-    Json(mut payload): Json<CreateProject>,
+    Json(payload): Json<CreateProject>,
 ) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
     tracing::debug!("Creating project '{}'", payload.name);
     let repo_count = payload.repositories.len();
-    if payload.workspace_root.is_none() {
-        let config = deployment.config().read().await;
-        payload.workspace_root = config.default_workspace_root.clone();
-    }
 
     match deployment
         .project()

@@ -193,7 +193,8 @@
       "agent": "Agent",
       "branch": "Branch",
       "diffs": "Diffs",
-      "summaryAndActions": "Summary & Actions"
+      "summaryAndActions": "Changes Summary",
+      "uncommitted": "Uncommitted"
     },
     "agent": "Agent",
     "path": "Path",
@@ -240,6 +241,9 @@
       "behind": "behind"
     },
     "states": {
+      "committed": "Committed!",
+      "committing": "Committing...",
+      "commit": "Commit",
       "merged": "Merged!",
       "merging": "Merging...",
       "merge": "Merge",
@@ -265,6 +269,8 @@
     },
     "actions": {
       "title": "Git Actions",
+      "uncommittedHint": "Changes are uncommitted. Create a commit before merging or opening a PR.",
+      "noChangesToCommit": "No changes to commit.",
       "prMerged": "PR #{{number}} is already merged",
       "loginRequired": {
         "title": "Sign in to manage git actions",
@@ -462,6 +468,7 @@
       "cancelled": "Cancelled"
     },
     "startLabel": "Start",
+    "noExecutorHint": "No executor configured. Auto-start is disabled.",
     "attachImage": "Attach image",
     "dropImagesHere": "Drop images here",
     "updating": "Updating...",

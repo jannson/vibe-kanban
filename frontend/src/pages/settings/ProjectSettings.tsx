@@ -312,7 +312,6 @@ export function ProjectSettings() {
     const result = await RepoPickerDialog.show({
       title: 'Select Git Repository',
       description: 'Choose a git repository to add to this project',
-      workspaceRoot: selectedProject?.workspace_root || undefined,
     });
 
     if (!result) return;

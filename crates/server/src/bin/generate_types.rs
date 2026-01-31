@@ -107,6 +107,7 @@ fn generate_types_content() -> String {
         server::routes::sessions::CreateFollowUpAttempt::decl(),
         server::routes::task_attempts::ChangeTargetBranchRequest::decl(),
         server::routes::task_attempts::ChangeTargetBranchResponse::decl(),
+        server::routes::task_attempts::CommitTaskAttemptRequest::decl(),
         server::routes::task_attempts::MergeTaskAttemptRequest::decl(),
         server::routes::task_attempts::PushTaskAttemptRequest::decl(),
         server::routes::task_attempts::RenameBranchRequest::decl(),

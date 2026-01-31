@@ -21,6 +21,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBranchStatus, useAttemptExecution } from '@/hooks';
 import { paths } from '@/lib/paths';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
+import { LogsCollapseProvider } from '@/contexts/LogsCollapseContext';
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
 import { ReviewProvider } from '@/contexts/ReviewProvider';
 import {
@@ -1014,15 +1015,17 @@ export function ProjectTasks() {
       <ClickedElementsProvider attempt={attempt}>
         <ReviewProvider attemptId={attempt?.id}>
           <ExecutionProcessesProvider attemptId={attempt?.id}>
-            <TasksLayout
-              kanban={kanbanContent}
-              attempt={attemptContent}
-              aux={auxContent}
-              isPanelOpen={isPanelOpen}
-              mode={effectiveMode}
-              isMobile={isMobile}
-              rightHeader={rightHeader}
-            />
+            <LogsCollapseProvider>
+              <TasksLayout
+                kanban={kanbanContent}
+                attempt={attemptContent}
+                aux={auxContent}
+                isPanelOpen={isPanelOpen}
+                mode={effectiveMode}
+                isMobile={isMobile}
+                rightHeader={rightHeader}
+              />
+            </LogsCollapseProvider>
           </ExecutionProcessesProvider>
         </ReviewProvider>
       </ClickedElementsProvider>

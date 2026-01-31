@@ -739,6 +739,7 @@ export function TaskFollowUpSection({
                 projectId={projectId}
                 taskAttemptId={workspaceId}
                 onCmdEnter={handleSubmitShortcut}
+                onEnter={handleSubmitShortcut}
                 className="min-h-[40px]"
               />
             </div>

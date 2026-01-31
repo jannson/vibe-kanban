@@ -169,8 +169,25 @@ impl GitService {
         let has_email = cfg.get_string("user.email").is_ok();
         if !(has_name && has_email) {
             let mut cfg = repo.config()?;
-            cfg.set_str("user.name", "Vibe Kanban")?;
-            cfg.set_str("user.email", "noreply@vibekanban.com")?;
+            if cfg
+                .set_str("user.name", "Vibe Kanban")
+                .and_then(|_| cfg.set_str("user.email", "noreply@vibekanban.com"))
+                .is_err()
+            {
+                let git = GitCli::new();
+                git.git(repo_path, ["config", "user.name", "Vibe Kanban"])
+                    .map_err(|e| {
+                        GitServiceError::InvalidRepository(format!(
+                            "git config user.name failed: {e}"
+                        ))
+                    })?;
+                git.git(repo_path, ["config", "user.email", "noreply@vibekanban.com"])
+                    .map_err(|e| {
+                        GitServiceError::InvalidRepository(format!(
+                            "git config user.email failed: {e}"
+                        ))
+                    })?;
+            }
         }
         Ok(())
     }

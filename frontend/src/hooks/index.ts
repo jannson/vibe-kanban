@@ -10,6 +10,7 @@ export { useRebase } from './useRebase';
 export { useChangeTargetBranch } from './useChangeTargetBranch';
 export { useRenameBranch } from './useRenameBranch';
 export { useMerge } from './useMerge';
+export { useCommit } from './useCommit';
 export { usePush } from './usePush';
 export { useAttemptConflicts } from './useAttemptConflicts';
 export { useNavigateWithSearch } from './useNavigateWithSearch';

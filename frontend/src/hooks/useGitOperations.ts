@@ -1,5 +1,6 @@
 import { useRebase } from './useRebase';
 import { useMerge } from './useMerge';
+import { useCommit } from './useCommit';
 import { usePush } from './usePush';
 import { useForcePush } from './useForcePush';
 import { useChangeTargetBranch } from './useChangeTargetBranch';
@@ -39,6 +40,18 @@ export function useGitOperations(
         err && typeof err === 'object' && 'message' in err
           ? String(err.message)
           : 'Failed to merge';
+      setError(message);
+    }
+  );
+
+  const commit = useCommit(
+    attemptId,
+    () => setError(null),
+    (err: unknown) => {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? String(err.message)
+          : 'Failed to commit';
       setError(message);
     }
   );
@@ -92,6 +105,7 @@ export function useGitOperations(
   const isAnyLoading =
     rebase.isPending ||
     merge.isPending ||
+    commit.isPending ||
     push.isPending ||
     forcePush.isPending ||
     changeTargetBranch.isPending;
@@ -99,6 +113,7 @@ export function useGitOperations(
   return {
     actions: {
       rebase: rebase.mutateAsync,
+      commit: commit.mutateAsync,
       merge: merge.mutateAsync,
       push: push.mutateAsync,
       forcePush: forcePush.mutateAsync,
@@ -107,6 +122,7 @@ export function useGitOperations(
     isAnyLoading,
     states: {
       rebasePending: rebase.isPending,
+      commitPending: commit.isPending,
       mergePending: merge.isPending,
       pushPending: push.isPending,
       forcePushPending: forcePush.isPending,

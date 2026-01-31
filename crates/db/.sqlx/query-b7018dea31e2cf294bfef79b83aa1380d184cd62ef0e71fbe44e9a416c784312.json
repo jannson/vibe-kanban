@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n                    ep.id as \"id!: Uuid\",\n                    ep.session_id as \"session_id!: Uuid\",\n                    ep.run_reason as \"run_reason!: ExecutionProcessRunReason\",\n                    ep.executor_action as \"executor_action!: sqlx::types::Json<ExecutorActionField>\",\n                    ep.status as \"status!: ExecutionProcessStatus\",\n                    ep.exit_code,\n                    ep.dropped as \"dropped!: bool\",\n                    ep.started_at as \"started_at!: DateTime<Utc>\",\n                    ep.completed_at as \"completed_at?: DateTime<Utc>\",\n                    ep.created_at as \"created_at!: DateTime<Utc>\",\n                    ep.updated_at as \"updated_at!: DateTime<Utc>\"\n               FROM execution_processes ep WHERE ep.status = 'running' ORDER BY ep.created_at ASC",
+  "query": "SELECT ep.id as \"id!: Uuid\", ep.session_id as \"session_id!: Uuid\", ep.run_reason as \"run_reason!: ExecutionProcessRunReason\", ep.executor_action as \"executor_action!: sqlx::types::Json<ExecutorActionField>\",\n                      ep.status as \"status!: ExecutionProcessStatus\", ep.exit_code,\n                      ep.dropped as \"dropped!: bool\", NULL as \"agent_run_index?: i64\", ep.started_at as \"started_at!: DateTime<Utc>\", ep.completed_at as \"completed_at?: DateTime<Utc>\", ep.created_at as \"created_at!: DateTime<Utc>\", ep.updated_at as \"updated_at!: DateTime<Utc>\"\n               FROM execution_processes ep\n               JOIN sessions s ON ep.session_id = s.id\n               JOIN workspaces w ON s.workspace_id = w.id\n               JOIN tasks t ON w.task_id = t.id\n               WHERE ep.status = 'running' AND ep.run_reason = 'devserver' AND t.project_id = ?\n               ORDER BY ep.created_at ASC",
   "describe": {
     "columns": [
       {
@@ -39,28 +39,33 @@
         "type_info": "Integer"
       },
       {
-        "name": "started_at!: DateTime<Utc>",
+        "name": "agent_run_index?: i64",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Null"
       },
       {
-        "name": "completed_at?: DateTime<Utc>",
+        "name": "started_at!: DateTime<Utc>",
         "ordinal": 8,
         "type_info": "Text"
       },
       {
-        "name": "created_at!: DateTime<Utc>",
+        "name": "completed_at?: DateTime<Utc>",
         "ordinal": 9,
         "type_info": "Text"
       },
       {
-        "name": "updated_at!: DateTime<Utc>",
+        "name": "created_at!: DateTime<Utc>",
         "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!: DateTime<Utc>",
+        "ordinal": 11,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       true,
@@ -70,11 +75,12 @@
       false,
       true,
       false,
+      true,
       false,
       true,
       false,
       false
     ]
   },
-  "hash": "80e6cfb4e27fcaa79b7dbd37ac16aac255f46a646c75aa65111b2f58ec03f892"
+  "hash": "b7018dea31e2cf294bfef79b83aa1380d184cd62ef0e71fbe44e9a416c784312"
 }

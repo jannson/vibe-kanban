@@ -49,6 +49,7 @@ import type {
   TaskStatus,
   ExecutorProfileId,
   ImageResponse,
+  BaseCodingAgent,
 } from 'shared/types';
 
 interface Task {
@@ -118,6 +119,8 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       enabled: modal.visible && projectRepos.length > 0,
     });
 
+  const hasProfiles = Boolean(profiles && Object.keys(profiles).length > 0);
+
   const defaultRepoBranches = useMemo((): RepoBranch[] => {
     return repoBranchConfigs
       .filter((c) => c.targetBranch !== null)
@@ -147,7 +150,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           status: 'todo',
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
-          autoStart: true,
+          autoStart: hasProfiles,
           useWorktree: false,
         };
 
@@ -160,11 +163,17 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           status: 'todo',
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
-          autoStart: true,
+          autoStart: hasProfiles,
           useWorktree: false,
         };
     }
-  }, [mode, props, system.config?.executor_profile, defaultRepoBranches]);
+  }, [
+    mode,
+    props,
+    system.config?.executor_profile,
+    defaultRepoBranches,
+    hasProfiles,
+  ]);
 
   // Form submission handler
   const handleSubmit = async ({ value }: { value: TaskFormValues }) => {
@@ -251,6 +260,24 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
     if (!taskImages) return;
     setImages(taskImages);
   }, [taskImages]);
+
+  useEffect(() => {
+    if (!modal.visible || editMode || !profiles) return;
+    if (form.getFieldValue('executorProfileId')) return;
+    const executors = Object.keys(profiles).sort() as BaseCodingAgent[];
+    if (executors.length === 0) return;
+    form.setFieldValue('executorProfileId', {
+      executor: executors[0],
+      variant: null,
+    });
+  }, [modal.visible, editMode, profiles, form]);
+
+  useEffect(() => {
+    if (!modal.visible || editMode) return;
+    if (!hasProfiles && form.getFieldValue('autoStart')) {
+      form.setFieldValue('autoStart', false);
+    }
+  }, [modal.visible, editMode, hasProfiles, form]);
 
   const onDrop = useCallback(
     async (files: File[]) => {
@@ -672,7 +699,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                         onCheckedChange={(checked) =>
                           field.handleChange(checked)
                         }
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !hasProfiles}
                         className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
                         aria-label={t('taskFormDialog.startLabel')}
                       />
@@ -682,6 +709,11 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                       >
                         {t('taskFormDialog.startLabel')}
                       </Label>
+                      {!hasProfiles && (
+                        <span className="text-xs text-muted-foreground">
+                          {t('taskFormDialog.noExecutorHint')}
+                        </span>
+                      )}
                     </div>
                   )}
                 </form.Field>

@@ -70,6 +70,8 @@ pub struct ExecutionProcess {
     /// history view (due to restore/trimming). Hidden from logs/timeline;
     /// still listed in the Processes tab.
     pub dropped: bool,
+    /// Stable 1-based index for coding agent runs within a workspace.
+    pub agent_run_index: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -132,11 +134,21 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    CASE
+                        WHEN ep.run_reason = 'codingagent' THEN
+                            ROW_NUMBER() OVER (
+                                PARTITION BY s.workspace_id, ep.run_reason
+                                ORDER BY ep.created_at ASC, ep.id ASC
+                            )
+                        ELSE NULL
+                    END as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
                     ep.updated_at as "updated_at!: DateTime<Utc>"
-               FROM execution_processes ep WHERE ep.id = ?"#,
+               FROM execution_processes ep
+               JOIN sessions s ON s.id = ep.session_id
+               WHERE ep.id = ?"#,
             id
         )
         .fetch_optional(pool)
@@ -206,11 +218,21 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    CASE
+                        WHEN ep.run_reason = 'codingagent' THEN
+                            ROW_NUMBER() OVER (
+                                PARTITION BY s.workspace_id, ep.run_reason
+                                ORDER BY ep.created_at ASC, ep.id ASC
+                            )
+                        ELSE NULL
+                    END as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
                     ep.updated_at as "updated_at!: DateTime<Utc>"
-               FROM execution_processes ep WHERE ep.rowid = ?"#,
+               FROM execution_processes ep
+               JOIN sessions s ON s.id = ep.session_id
+               WHERE ep.rowid = ?"#,
             rowid
         )
         .fetch_optional(pool)
@@ -233,11 +255,20 @@ impl ExecutionProcess {
                       ep.status          as "status!: ExecutionProcessStatus",
                       ep.exit_code,
                       ep.dropped as "dropped!: bool",
+                      CASE
+                          WHEN ep.run_reason = 'codingagent' THEN
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY s.workspace_id, ep.run_reason
+                                  ORDER BY ep.created_at ASC, ep.id ASC
+                              )
+                          ELSE NULL
+                      END as "agent_run_index?: i64",
                       ep.started_at      as "started_at!: DateTime<Utc>",
                       ep.completed_at    as "completed_at?: DateTime<Utc>",
                       ep.created_at      as "created_at!: DateTime<Utc>",
                       ep.updated_at      as "updated_at!: DateTime<Utc>"
                FROM execution_processes ep
+               JOIN sessions s ON s.id = ep.session_id
                WHERE ep.session_id = ?
                  AND (? OR ep.dropped = FALSE)
                ORDER BY ep.created_at ASC"#,
@@ -264,6 +295,14 @@ impl ExecutionProcess {
                       ep.status          as "status!: ExecutionProcessStatus",
                       ep.exit_code,
                       ep.dropped as "dropped!: bool",
+                      CASE
+                          WHEN ep.run_reason = 'codingagent' THEN
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY s.workspace_id, ep.run_reason
+                                  ORDER BY ep.created_at ASC, ep.id ASC
+                              )
+                          ELSE NULL
+                      END as "agent_run_index?: i64",
                       ep.started_at      as "started_at!: DateTime<Utc>",
                       ep.completed_at    as "completed_at?: DateTime<Utc>",
                       ep.created_at      as "created_at!: DateTime<Utc>",
@@ -292,6 +331,7 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    NULL as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
@@ -311,7 +351,7 @@ impl ExecutionProcess {
             ExecutionProcess,
             r#"SELECT ep.id as "id!: Uuid", ep.session_id as "session_id!: Uuid", ep.run_reason as "run_reason!: ExecutionProcessRunReason", ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                       ep.status as "status!: ExecutionProcessStatus", ep.exit_code,
-                      ep.dropped as "dropped!: bool", ep.started_at as "started_at!: DateTime<Utc>", ep.completed_at as "completed_at?: DateTime<Utc>", ep.created_at as "created_at!: DateTime<Utc>", ep.updated_at as "updated_at!: DateTime<Utc>"
+                      ep.dropped as "dropped!: bool", NULL as "agent_run_index?: i64", ep.started_at as "started_at!: DateTime<Utc>", ep.completed_at as "completed_at?: DateTime<Utc>", ep.created_at as "created_at!: DateTime<Utc>", ep.updated_at as "updated_at!: DateTime<Utc>"
                FROM execution_processes ep
                JOIN sessions s ON ep.session_id = s.id
                JOIN workspaces w ON s.workspace_id = w.id
@@ -359,6 +399,7 @@ impl ExecutionProcess {
             ep.status as "status!: ExecutionProcessStatus",
             ep.exit_code,
             ep.dropped as "dropped!: bool",
+            NULL as "agent_run_index?: i64",
             ep.started_at as "started_at!: DateTime<Utc>",
             ep.completed_at as "completed_at?: DateTime<Utc>",
             ep.created_at as "created_at!: DateTime<Utc>",
@@ -421,6 +462,7 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    NULL as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
@@ -451,6 +493,7 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    NULL as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
@@ -677,6 +720,7 @@ impl ExecutionProcess {
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
                     ep.dropped as "dropped!: bool",
+                    NULL as "agent_run_index?: i64",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",

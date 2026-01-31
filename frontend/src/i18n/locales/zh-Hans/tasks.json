@@ -206,7 +206,8 @@
       "agent": "代理",
       "branch": "分支",
       "diffs": "差异",
-      "summaryAndActions": "摘要和操作"
+      "summaryAndActions": "改动汇总",
+      "uncommitted": "未提交"
     },
     "agent": "代理",
     "path": "路径",
@@ -253,6 +254,9 @@
       "behind": "落后"
     },
     "states": {
+      "committed": "已提交！",
+      "committing": "提交中...",
+      "commit": "提交",
       "merged": "已合并！",
       "merging": "合并中...",
       "merge": "合并",
@@ -278,6 +282,8 @@
     },
     "actions": {
       "title": "Git 操作",
+      "uncommittedHint": "更改尚未提交。合并或创建 PR 前请先提交。",
+      "noChangesToCommit": "没有可提交的更改。",
       "prMerged": "PR #{{number}} 已合并",
       "loginRequired": {
         "title": "登录以管理 git 操作",
@@ -462,6 +468,7 @@
       "cancelled": "已取消"
     },
     "startLabel": "开始",
+    "noExecutorHint": "未配置执行器，无法自动开始",
     "attachImage": "附加图片",
     "dropImagesHere": "在此处放置图片",
     "updating": "更新中...",

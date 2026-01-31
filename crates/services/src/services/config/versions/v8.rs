@@ -28,10 +28,6 @@ pub struct Config {
     pub editor: EditorConfig,
     pub github: GitHubConfig,
     pub analytics_enabled: bool,
-    #[serde(default)]
-    pub workspace_roots: Vec<String>,
-    #[serde(default)]
-    pub default_workspace_root: Option<String>,
     pub last_app_version: Option<String>,
     pub show_release_notes: bool,
     #[serde(default)]
@@ -51,13 +47,7 @@ impl Config {
         // Convert Option<bool> to bool: None or Some(true) become true, Some(false) stays false
         let analytics_enabled = old_config.analytics_enabled.unwrap_or(true);
 
-        let workspace_roots = old_config
-            .workspace_dir
-            .clone()
-            .map(|dir| vec![dir.clone()])
-            .unwrap_or_default();
-
-        let mut config = Self {
+        let config = Self {
             config_version: "v8".to_string(),
             theme: old_config.theme,
             executor_profile: old_config.executor_profile,
@@ -67,8 +57,6 @@ impl Config {
             editor: old_config.editor,
             github: old_config.github,
             analytics_enabled,
-            workspace_roots,
-            default_workspace_root: old_config.workspace_dir,
             last_app_version: old_config.last_app_version,
             show_release_notes: old_config.show_release_notes,
             language: old_config.language,
@@ -78,7 +66,6 @@ impl Config {
             pr_auto_description_prompt: None,
         };
 
-        config.normalize_workspace_roots();
         config
     }
 
@@ -90,11 +77,9 @@ impl Config {
 
 impl From<String> for Config {
     fn from(raw_config: String) -> Self {
-        if let Ok(mut config) = serde_json::from_str::<Config>(&raw_config)
+        if let Ok(config) = serde_json::from_str::<Config>(&raw_config)
             && config.config_version == "v8"
         {
-            config.maybe_migrate_workspace_dir(&raw_config);
-            config.normalize_workspace_roots();
             return config;
         }
 
@@ -113,7 +98,7 @@ impl From<String> for Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut config = Self {
+        let config = Self {
             config_version: "v8".to_string(),
             theme: ThemeMode::System,
             executor_profile: ExecutorProfileId::new(BaseCodingAgent::ClaudeCode),
@@ -123,8 +108,6 @@ impl Default for Config {
             editor: EditorConfig::default(),
             github: GitHubConfig::default(),
             analytics_enabled: true,
-            workspace_roots: Vec::new(),
-            default_workspace_root: None,
             last_app_version: None,
             show_release_notes: false,
             language: UiLanguage::default(),
@@ -134,37 +117,6 @@ impl Default for Config {
             pr_auto_description_prompt: None,
         };
 
-        config.normalize_workspace_roots();
         config
-    }
-}
-
-impl Config {
-    fn maybe_migrate_workspace_dir(&mut self, raw_config: &str) {
-        if self.default_workspace_root.is_some() || !self.workspace_roots.is_empty() {
-            return;
-        }
-
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_config) else {
-            return;
-        };
-        let Some(workspace_dir) = value
-            .get("workspace_dir")
-            .and_then(|val| val.as_str())
-            .map(|val| val.to_string())
-        else {
-            return;
-        };
-
-        self.default_workspace_root = Some(workspace_dir.clone());
-        self.workspace_roots = vec![workspace_dir];
-    }
-
-    fn normalize_workspace_roots(&mut self) {
-        if let Some(ref default_root) = self.default_workspace_root {
-            if !self.workspace_roots.contains(default_root) {
-                self.workspace_roots.insert(0, default_root.clone());
-            }
-        }
     }
 }

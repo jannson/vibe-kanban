@@ -1452,6 +1452,12 @@ impl ContainerService for LocalContainerService {
     }
 
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError> {
+        if std::env::var("VIBE_KANBAN_AUTO_COMMIT").is_err() {
+            tracing::debug!(
+                "Skipping auto-commit: VIBE_KANBAN_AUTO_COMMIT is not set"
+            );
+            return Ok(false);
+        }
         if !matches!(
             ctx.execution_process.run_reason,
             ExecutionProcessRunReason::CodingAgent | ExecutionProcessRunReason::CleanupScript,

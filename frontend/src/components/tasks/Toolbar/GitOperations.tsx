@@ -2,6 +2,7 @@ import {
   ArrowRight,
   GitBranch as GitBranchIcon,
   GitPullRequest,
+  GitCommit,
   RefreshCw,
   Settings,
   AlertTriangle,
@@ -65,6 +66,8 @@ function GitOperations({
   const [rebasing, setRebasing] = useState(false);
   const [mergeSuccess, setMergeSuccess] = useState(false);
   const [pushSuccess, setPushSuccess] = useState(false);
+  const [commitSuccess, setCommitSuccess] = useState(false);
+  const [committing, setCommitting] = useState(false);
 
   // Target branch change handlers
   const handleChangeTargetBranchClick = async (newBranch: string) => {
@@ -152,6 +155,42 @@ function GitOperations({
     return t('git.states.merge');
   }, [mergeSuccess, merging, t]);
 
+  const commitButtonLabel = useMemo(() => {
+    if (commitSuccess) return t('git.states.committed');
+    if (committing) return t('git.states.committing');
+    return t('git.states.commit');
+  }, [commitSuccess, committing, t]);
+
+  const mergeDisabledHint = useMemo(() => {
+    if (!selectedRepoStatus) return null;
+    if ((selectedRepoStatus?.commits_ahead ?? 0) === 0) {
+      return t('git.actions.uncommittedHint');
+    }
+    return null;
+  }, [selectedRepoStatus, t]);
+
+  const hasUncommittedChanges =
+    selectedRepoStatus?.has_uncommitted_changes ?? false;
+
+  const commitDisabledHint = useMemo(() => {
+    if (!selectedRepoStatus) return null;
+    if (!hasUncommittedChanges) {
+      return t('git.actions.noChangesToCommit');
+    }
+    return null;
+  }, [selectedRepoStatus, hasUncommittedChanges, t]);
+
+  const prDisabledHint = useMemo(() => {
+    if (!selectedRepoStatus) return null;
+    if (
+      (selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
+      (selectedRepoStatus?.remote_commits_ahead ?? 0) === 0
+    ) {
+      return t('git.actions.uncommittedHint');
+    }
+    return null;
+  }, [selectedRepoStatus, t]);
+
   const rebaseButtonLabel = useMemo(() => {
     if (rebasing) return t('git.states.rebasing');
     return t('git.states.rebase');
@@ -171,6 +210,22 @@ function GitOperations({
   const handleMergeClick = async () => {
     // Directly perform merge without checking branch status
     await performMerge();
+  };
+
+  const handleCommitClick = async () => {
+    try {
+      setCommitting(true);
+      const repoId = getSelectedRepoId();
+      if (!repoId) return;
+      await git.actions.commit({
+        repoId,
+        message: null,
+      });
+      setCommitSuccess(true);
+      setTimeout(() => setCommitSuccess(false), 2000);
+    } finally {
+      setCommitting(false);
+    }
   };
 
   const handlePushClick = async () => {
@@ -465,49 +520,112 @@ function GitOperations({
         {/* Right: Actions */}
         {selectedRepoStatus && (
           <div className={actionsClasses}>
-            <Button
-              onClick={handleMergeClick}
-              disabled={
-                mergeInfo.hasMergedPR ||
-                mergeInfo.hasOpenPR ||
-                merging ||
-                hasConflictsCalculated ||
-                isAttemptRunning ||
-                ((selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
-                  !pushSuccess &&
-                  !mergeSuccess)
-              }
-              variant="outline"
-              size="xs"
-              className="border-success text-success hover:bg-success gap-1 shrink-0"
-              aria-label={mergeButtonLabel}
-            >
-              <GitBranchIcon className="h-3.5 w-3.5" />
-              <span className="truncate max-w-[10ch]">{mergeButtonLabel}</span>
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      onClick={handleCommitClick}
+                      disabled={
+                        committing ||
+                        isAttemptRunning ||
+                        hasConflictsCalculated ||
+                        !hasUncommittedChanges
+                      }
+                      variant="outline"
+                      size="xs"
+                      className="border-muted-foreground text-muted-foreground hover:bg-muted gap-1 shrink-0"
+                      aria-label={commitButtonLabel}
+                    >
+                      <GitCommit className="h-3.5 w-3.5" />
+                      <span className="truncate max-w-[10ch]">
+                        {commitButtonLabel}
+                      </span>
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {commitDisabledHint && (
+                  <TooltipContent side="bottom">
+                    {commitDisabledHint}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      onClick={handleMergeClick}
+                      disabled={
+                        mergeInfo.hasMergedPR ||
+                        mergeInfo.hasOpenPR ||
+                        merging ||
+                        hasConflictsCalculated ||
+                        isAttemptRunning ||
+                        ((selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
+                          !pushSuccess &&
+                          !mergeSuccess)
+                      }
+                      variant="outline"
+                      size="xs"
+                      className="border-success text-success hover:bg-success gap-1 shrink-0"
+                      aria-label={mergeButtonLabel}
+                    >
+                      <GitBranchIcon className="h-3.5 w-3.5" />
+                      <span className="truncate max-w-[10ch]">
+                        {mergeButtonLabel}
+                      </span>
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {mergeDisabledHint && (
+                  <TooltipContent side="bottom">
+                    {mergeDisabledHint}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
 
-            <Button
-              onClick={handlePRButtonClick}
-              disabled={
-                mergeInfo.hasMergedPR ||
-                pushing ||
-                isAttemptRunning ||
-                hasConflictsCalculated ||
-                (mergeInfo.hasOpenPR &&
-                  (selectedRepoStatus?.remote_commits_ahead ?? 0) === 0) ||
-                ((selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
-                  (selectedRepoStatus?.remote_commits_ahead ?? 0) === 0 &&
-                  !pushSuccess &&
-                  !mergeSuccess)
-              }
-              variant="outline"
-              size="xs"
-              className="border-info text-info hover:bg-info gap-1 shrink-0"
-              aria-label={prButtonLabel}
-            >
-              <GitPullRequest className="h-3.5 w-3.5" />
-              <span className="truncate max-w-[10ch]">{prButtonLabel}</span>
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Button
+                      onClick={handlePRButtonClick}
+                      disabled={
+                        mergeInfo.hasMergedPR ||
+                        pushing ||
+                        isAttemptRunning ||
+                        hasConflictsCalculated ||
+                        (mergeInfo.hasOpenPR &&
+                          (selectedRepoStatus?.remote_commits_ahead ?? 0) ===
+                            0) ||
+                        ((selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
+                          (selectedRepoStatus?.remote_commits_ahead ?? 0) ===
+                            0 &&
+                          !pushSuccess &&
+                          !mergeSuccess)
+                      }
+                      variant="outline"
+                      size="xs"
+                      className="border-info text-info hover:bg-info gap-1 shrink-0"
+                      aria-label={prButtonLabel}
+                    >
+                      <GitPullRequest className="h-3.5 w-3.5" />
+                      <span className="truncate max-w-[10ch]">
+                        {prButtonLabel}
+                      </span>
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {prDisabledHint && (
+                  <TooltipContent side="bottom">
+                    {prDisabledHint}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
 
             <Button
               onClick={handleRebaseDialogOpen}
