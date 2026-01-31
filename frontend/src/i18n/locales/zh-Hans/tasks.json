@@ -325,6 +325,7 @@
   },
   "actionsMenu": {
     "attempt": "尝试",
+    "collapseAllRuns": "折叠会话",
     "openInIde": "在 IDE 中打开尝试",
     "viewProcesses": "查看进程",
     "viewRelatedTasks": "查看相关任务",

@@ -42,7 +42,31 @@ func main() {
 				http.Redirect(w, r, "/gateway/login/", http.StatusFound)
 				return
 			}
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unauthorized</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: #f4f5f7; }
+    .card { max-width: 520px; margin: 12vh auto; padding: 24px; background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+    h1 { margin: 0 0 10px; font-size: 20px; }
+    p { margin: 0 0 16px; color: #444; }
+    a { display: inline-block; padding: 8px 12px; border-radius: 8px; background: #1f2937; color: #fff; text-decoration: none; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Unauthorized</h1>
+    <p>Please sign in again to continue.</p>
+    <a href="/">Back to homepage</a>
+    <a href="/gateway/login/" style="margin-left:8px; background:#2563eb;">Go to login</a>
+  </div>
+</body>
+</html>`))
 			return
 		}
 

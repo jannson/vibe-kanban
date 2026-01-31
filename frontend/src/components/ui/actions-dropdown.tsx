@@ -204,7 +204,7 @@ export function ActionsDropdown({
               </DropdownMenuItem>
               {logsCollapse && (
                 <DropdownMenuItem onClick={handleCollapseAllRuns}>
-                  Collapse all agent runs
+                  {t('actionsMenu.collapseAllRuns')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem

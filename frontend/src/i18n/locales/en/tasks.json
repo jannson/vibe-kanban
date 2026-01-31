@@ -325,6 +325,7 @@
   },
   "actionsMenu": {
     "attempt": "Attempt",
+    "collapseAllRuns": "Collapse sessions",
     "openInIde": "Open attempt in IDE",
     "viewProcesses": "View processes",
     "viewRelatedTasks": "View related tasks",
