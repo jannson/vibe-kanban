@@ -297,6 +297,7 @@
     "description": "使用编码代理开始新的尝试。将创建 git 工作树和任务分支。",
     "useWorktree": "使用 worktree（覆盖默认）",
     "useWorktreeHelper": "创建独立 worktree，不直接使用原仓库。",
+    "useWorktreeSubtaskHelper": "子任务始终使用独立 worktree，以避免冲突。",
     "baseBranch": "基础分支",
     "loadingBranches": "加载分支中...",
     "selectBranch": "选择分支",

@@ -155,6 +155,15 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         };
 
       case 'subtask':
+        return {
+          title: '',
+          description: '',
+          status: 'todo',
+          executorProfileId: baseProfile,
+          repoBranches: defaultRepoBranches,
+          autoStart: hasProfiles,
+          useWorktree: true,
+        };
       case 'create':
       default:
         return {
@@ -278,6 +287,14 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       form.setFieldValue('autoStart', false);
     }
   }, [modal.visible, editMode, hasProfiles, form]);
+
+  useEffect(() => {
+    if (!modal.visible) return;
+    if (mode !== 'subtask') return;
+    if (!form.getFieldValue('useWorktree')) {
+      form.setFieldValue('useWorktree', true);
+    }
+  }, [modal.visible, mode, form]);
 
   const onDrop = useCallback(
     async (files: File[]) => {
@@ -650,7 +667,9 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                               {t('createAttemptDialog.useWorktree')}
                             </Label>
                             <p className="text-xs text-muted-foreground">
-                              {t('createAttemptDialog.useWorktreeHelper')}
+                              {mode === 'subtask'
+                                ? t('createAttemptDialog.useWorktreeSubtaskHelper')
+                                : t('createAttemptDialog.useWorktreeHelper')}
                             </p>
                           </div>
                           <Switch
@@ -659,7 +678,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             onCheckedChange={(checked) =>
                               field.handleChange(checked)
                             }
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || mode === 'subtask'}
                             className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
                             aria-label={t('createAttemptDialog.useWorktree')}
                           />
