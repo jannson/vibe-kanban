@@ -25,6 +25,7 @@ import { useTaskAttemptsWithSessions } from '@/hooks/useTaskAttempts';
 import { useProject } from '@/contexts/ProjectContext';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { paths } from '@/lib/paths';
+import { ApiError } from '@/lib/api';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import type { ExecutorProfileId, BaseCodingAgent } from 'shared/types';
@@ -41,7 +42,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { projectId } = useProject();
     const { t } = useTranslation('tasks');
     const { profiles, config } = useUserSystem();
-    const { createAttempt, isCreating, error } = useAttemptCreation({
+    const { createAttempt, isCreating } = useAttemptCreation({
       taskId,
       onSuccess: (attempt) => {
         if (projectId) {
@@ -52,7 +53,9 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
 
     const [userSelectedProfile, setUserSelectedProfile] =
       useState<ExecutorProfileId | null>(null);
-    const [useWorktreeOverride, setUseWorktreeOverride] = useState(false);
+    const defaultUseWorktree = !config?.default_use_original_repos;
+    const [useWorktree, setUseWorktree] = useState(defaultUseWorktree);
+    const [createError, setCreateError] = useState<string | null>(null);
 
     const { data: attempts = [], isLoading: isLoadingAttempts } =
       useTaskAttemptsWithSessions(taskId, {
@@ -97,10 +100,11 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     useEffect(() => {
       if (!modal.visible) {
         setUserSelectedProfile(null);
-        setUseWorktreeOverride(false);
+        setUseWorktree(defaultUseWorktree);
+        setCreateError(null);
         resetBranchSelection();
       }
-    }, [modal.visible, resetBranchSelection]);
+    }, [modal.visible, resetBranchSelection, defaultUseWorktree]);
 
     const defaultProfile: ExecutorProfileId | null = useMemo(() => {
       if (latestAttempt?.session?.executor) {
@@ -151,17 +155,24 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       )
         return;
       try {
+        setCreateError(null);
         const repos = getWorkspaceRepoInputs();
 
         await createAttempt({
           profile: effectiveProfile,
           repos,
-          useOriginalRepos: useWorktreeOverride ? false : null,
+          useOriginalRepos: useWorktree ? false : true,
         });
 
         modal.hide();
       } catch (err) {
-        console.error('Failed to create attempt:', err);
+        if (err instanceof ApiError) {
+          setCreateError(err.message);
+        } else if (err instanceof Error) {
+          setCreateError(err.message);
+        } else {
+          setCreateError(t('createAttemptDialog.error'));
+        }
       }
     };
 
@@ -217,18 +228,16 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
               </div>
               <Switch
                 id="attempt-worktree-switch"
-                checked={useWorktreeOverride}
-                onCheckedChange={setUseWorktreeOverride}
+                checked={useWorktree}
+                onCheckedChange={setUseWorktree}
                 disabled={isCreating}
                 className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
                 aria-label={t('createAttemptDialog.useWorktree')}
               />
             </div>
 
-            {error && (
-              <div className="text-sm text-destructive">
-                {t('createAttemptDialog.error')}
-              </div>
+            {createError && (
+              <div className="text-sm text-destructive">{createError}</div>
             )}
           </div>
 

@@ -289,7 +289,7 @@
   "createAttemptDialog": {
     "title": "建立嘗試",
     "description": "使用編碼代理開始新的嘗試。將建立 Git 工作樹與任務分支。",
-    "useWorktree": "使用 worktree（覆蓋預設）",
+    "useWorktree": "使用 worktree",
     "useWorktreeHelper": "建立獨立 worktree，不直接使用原始儲存庫。",
     "baseBranch": "基底分支",
     "loadingBranches": "載入分支中...",

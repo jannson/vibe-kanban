@@ -45,6 +45,7 @@ import {
 } from '@/keyboard';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { cn } from '@/lib/utils';
+import { ApiError } from '@/lib/api';
 import type {
   TaskStatus,
   ExecutorProfileId,
@@ -101,6 +102,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const [newlyUploadedImageIds, setNewlyUploadedImageIds] = useState<string[]>(
     []
   );
+  const [createError, setCreateError] = useState<string | null>(null);
   const [showDiscardWarning, setShowDiscardWarning] = useState(false);
   const forceCreateOnlyRef = useRef(false);
 
@@ -127,6 +129,8 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       .map((c) => ({ repoId: c.repoId, branch: c.targetBranch! }));
   }, [repoBranchConfigs]);
 
+  const defaultUseWorktree = !(system.config?.default_use_original_repos ?? false);
+
   // Get default form values based on mode
   const defaultValues = useMemo((): TaskFormValues => {
     const baseProfile = system.config?.executor_profile || null;
@@ -140,7 +144,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
-          useWorktree: false,
+          useWorktree: defaultUseWorktree,
         };
 
       case 'duplicate':
@@ -151,7 +155,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: hasProfiles,
-          useWorktree: false,
+          useWorktree: defaultUseWorktree,
         };
 
       case 'subtask':
@@ -173,7 +177,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: hasProfiles,
-          useWorktree: false,
+          useWorktree: defaultUseWorktree,
         };
     }
   }, [
@@ -182,10 +186,12 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
     system.config?.executor_profile,
     defaultRepoBranches,
     hasProfiles,
+    defaultUseWorktree,
   ]);
 
   // Form submission handler
   const handleSubmit = async ({ value }: { value: TaskFormValues }) => {
+    setCreateError(null);
     if (editMode) {
       await updateTask.mutateAsync(
         {
@@ -219,16 +225,26 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           repo_id: rb.repoId,
           target_branch: rb.branch,
         }));
-        const useOriginalRepos = value.useWorktree ? false : null;
-        await createAndStart.mutateAsync(
-          {
-            task,
-            executor_profile_id: value.executorProfileId!,
-            repos,
-            use_original_repos: useOriginalRepos,
-          },
-          { onSuccess: () => modal.remove() }
-        );
+        const useOriginalRepos = value.useWorktree ? false : true;
+        try {
+          await createAndStart.mutateAsync(
+            {
+              task,
+              executor_profile_id: value.executorProfileId!,
+              repos,
+              use_original_repos: useOriginalRepos,
+            },
+            { onSuccess: () => modal.remove() }
+          );
+        } catch (err) {
+          if (err instanceof ApiError) {
+            setCreateError(err.message);
+          } else if (err instanceof Error) {
+            setCreateError(err.message);
+          } else {
+            setCreateError(t('createAttemptDialog.error'));
+          }
+        }
       } else {
         await createTask.mutateAsync(task, { onSuccess: () => modal.remove() });
       }
@@ -295,6 +311,12 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       form.setFieldValue('useWorktree', true);
     }
   }, [modal.visible, mode, form]);
+
+  useEffect(() => {
+    if (!modal.visible) {
+      setCreateError(null);
+    }
+  }, [modal.visible]);
 
   const onDrop = useCallback(
     async (files: File[]) => {
@@ -689,6 +711,9 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                 );
               }}
             </form.Field>
+          )}
+          {createError && (
+            <div className="text-sm text-destructive">{createError}</div>
           )}
 
           {/* Actions */}

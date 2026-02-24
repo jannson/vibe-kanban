@@ -81,10 +81,6 @@ pub struct LocalContainerService {
 }
 
 impl LocalContainerService {
-    fn default_use_original_repos() -> bool {
-        std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok()
-    }
-
     fn infer_use_original_repos(container_ref: &str) -> bool {
         let workspace_base = WorkspaceManager::get_workspace_base_dir();
         let container_path = PathBuf::from(container_ref);
@@ -94,6 +90,7 @@ impl LocalContainerService {
     async fn resolve_use_original_repos(
         db: &DBService,
         workspace: &Workspace,
+        default_use_original_repos: bool,
     ) -> bool {
         if let Some(value) = workspace.use_original_repos {
             return value;
@@ -101,7 +98,7 @@ impl LocalContainerService {
 
         let inferred = match workspace.container_ref.as_deref() {
             Some(container_ref) => Self::infer_use_original_repos(container_ref),
-            None => return Self::default_use_original_repos(),
+            None => return default_use_original_repos,
         };
 
         if let Err(err) = Workspace::update_use_original_repos(
@@ -218,7 +215,11 @@ impl LocalContainerService {
         map.remove(id)
     }
 
-    pub async fn cleanup_workspace(db: &DBService, workspace: &Workspace) {
+    pub async fn cleanup_workspace(
+        db: &DBService,
+        workspace: &Workspace,
+        default_use_original_repos: bool,
+    ) {
         let Some(container_ref) = &workspace.container_ref else {
             return;
         };
@@ -228,7 +229,13 @@ impl LocalContainerService {
             .await
             .unwrap_or_default();
 
-        if LocalContainerService::resolve_use_original_repos(db, workspace).await {
+        if LocalContainerService::resolve_use_original_repos(
+            db,
+            workspace,
+            default_use_original_repos,
+        )
+        .await
+        {
             let _ = Workspace::clear_container_ref(&db.pool, workspace.id).await;
             return;
         }
@@ -259,7 +266,10 @@ impl LocalContainerService {
         let _ = Workspace::clear_container_ref(&db.pool, workspace.id).await;
     }
 
-    pub async fn cleanup_expired_workspaces(db: &DBService) -> Result<(), DeploymentError> {
+    pub async fn cleanup_expired_workspaces(
+        db: &DBService,
+        default_use_original_repos: bool,
+    ) -> Result<(), DeploymentError> {
         let expired_workspaces = Workspace::find_expired_for_cleanup(&db.pool).await?;
         if expired_workspaces.is_empty() {
             tracing::debug!("No expired workspaces found");
@@ -270,20 +280,21 @@ impl LocalContainerService {
             expired_workspaces.len()
         );
         for workspace in &expired_workspaces {
-            Self::cleanup_workspace(db, workspace).await;
+            Self::cleanup_workspace(db, workspace, default_use_original_repos).await;
         }
         Ok(())
     }
 
     pub async fn spawn_workspace_cleanup(&self) {
         let db = self.db.clone();
+        let default_use_original_repos = self.config.read().await.default_use_original_repos;
         let mut cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(1800)); // 30 minutes
         WorkspaceManager::cleanup_orphan_workspaces(&self.db.pool).await;
         tokio::spawn(async move {
             loop {
                 cleanup_interval.tick().await;
                 tracing::info!("Starting periodic workspace cleanup...");
-                Self::cleanup_expired_workspaces(&db)
+                Self::cleanup_expired_workspaces(&db, default_use_original_repos)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::error!("Failed to clean up expired workspaces: {}", e)
@@ -998,7 +1009,14 @@ impl ContainerService for LocalContainerService {
         let repositories =
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
 
-        if Self::resolve_use_original_repos(&self.db, workspace).await {
+        let default_use_original_repos = self.config.read().await.default_use_original_repos;
+        if Self::resolve_use_original_repos(
+            &self.db,
+            workspace,
+            default_use_original_repos,
+        )
+        .await
+        {
             let workspace_dir = self.resolve_original_workspace_dir(&repositories).await?;
             let target_branches: HashMap<_, _> = workspace_repos
                 .iter()
@@ -1080,7 +1098,8 @@ impl ContainerService for LocalContainerService {
 
     async fn delete(&self, workspace: &Workspace) -> Result<(), ContainerError> {
         self.try_stop(workspace, true).await;
-        Self::cleanup_workspace(&self.db, workspace).await;
+        let default_use_original_repos = self.config.read().await.default_use_original_repos;
+        Self::cleanup_workspace(&self.db, workspace, default_use_original_repos).await;
         Ok(())
     }
 
@@ -1098,7 +1117,14 @@ impl ContainerService for LocalContainerService {
             )));
         }
 
-        if Self::resolve_use_original_repos(&self.db, workspace).await {
+        let default_use_original_repos = self.config.read().await.default_use_original_repos;
+        if Self::resolve_use_original_repos(
+            &self.db,
+            workspace,
+            default_use_original_repos,
+        )
+        .await
+        {
             let workspace_repos =
                 WorkspaceRepo::find_by_workspace_id(&self.db.pool, workspace.id).await?;
             let target_branches: HashMap<_, _> = workspace_repos

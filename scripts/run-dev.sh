@@ -46,9 +46,9 @@ fi
 export BACKEND_HOST
 
 # Use original repositories instead of worktrees (see config.json workspace roots).
-export VIBE_KANBAN_USE_ORIGINAL_REPOS="${VIBE_KANBAN_USE_ORIGINAL_REPOS:-1}"
+#export VIBE_KANBAN_USE_ORIGINAL_REPOS="${VIBE_KANBAN_USE_ORIGINAL_REPOS:-1}"
 # Enable auto-commit for dev runs unless explicitly disabled.
-export VIBE_KANBAN_AUTO_COMMIT="${VIBE_KANBAN_AUTO_COMMIT:-1}"
+export VIBE_KANBAN_AUTO_COMMIT="${VIBE_KANBAN_AUTO_COMMIT:-0}"
 # Default worktree base path (used when original repos mode is disabled).
 export VIBE_KANBAN_WORKTREE_PATH="${VIBE_KANBAN_WORKTREE_PATH:-/projects/workspace-linkease-ubuntu/worktree-repos}"
 

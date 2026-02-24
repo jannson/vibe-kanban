@@ -133,6 +133,10 @@
             "invalidChars": "유효하지 않은 문자가 포함되어 있습니다.",
             "controlChars": "제어 문자가 포함되어 있습니다."
           }
+        },
+        "defaultOriginalRepos": {
+          "label": "Default to Original Repos",
+          "helper": "When enabled, new tasks use original repos instead of worktrees by default."
         }
       },
       "pullRequests": {

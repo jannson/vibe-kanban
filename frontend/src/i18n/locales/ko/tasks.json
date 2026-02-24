@@ -178,7 +178,7 @@
     "baseBranch": "Base branch",
     "creating": "Creating...",
     "description": "Start a new attempt with a coding agent. A git worktree and task branch will be created.",
-    "useWorktree": "워크트리 사용(기본값 덮어쓰기)",
+    "useWorktree": "워크트리 사용",
     "useWorktreeHelper": "원본 저장소 대신 독립적인 worktree를 생성합니다.",
     "error": "Failed to create attempt. Please try again.",
     "loadingBranches": "Loading branches...",

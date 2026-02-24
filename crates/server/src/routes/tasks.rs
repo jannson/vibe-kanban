@@ -16,7 +16,7 @@ use db::models::{
     image::TaskImage,
     project::{Project, ProjectError},
     repo::Repo,
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
 };
@@ -45,14 +45,73 @@ pub struct TaskQuery {
     pub all_projects: Option<bool>,
 }
 
-fn default_use_original_repos() -> bool {
-    std::env::var("VIBE_KANBAN_USE_ORIGINAL_REPOS").is_ok()
-}
-
 fn infer_use_original_repos(container_ref: &str) -> bool {
     let workspace_base = WorkspaceManager::get_workspace_base_dir();
     let container_path = PathBuf::from(container_ref);
     !container_path.starts_with(&workspace_base)
+}
+
+async fn ensure_original_repo_available(
+    deployment: &DeploymentImpl,
+    repos: &[WorkspaceRepoInput],
+) -> Result<(), ApiError> {
+    let pool = &deployment.db().pool;
+    let config = deployment.config().read().await.clone();
+    let branch_prefix = config.git_branch_prefix.trim().to_string();
+
+    for repo_input in repos {
+        let occupied = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT 1
+            FROM workspaces w
+            JOIN workspace_repos wr ON wr.workspace_id = w.id
+            JOIN tasks t ON t.id = w.task_id
+            WHERE w.use_original_repos = 1
+              AND wr.repo_id = ?
+              AND t.status IN (?, ?)
+            LIMIT 1
+            "#,
+        )
+        .bind(repo_input.repo_id)
+        .bind(TaskStatus::InProgress)
+        .bind(TaskStatus::InReview)
+        .fetch_optional(pool)
+        .await?;
+
+        if occupied.is_some() {
+            return Err(ApiError::BadRequest(
+                "Original repo is already in use for this repository".to_string(),
+            ));
+        }
+
+        if !branch_prefix.is_empty() {
+            let repo = Repo::find_by_id(pool, repo_input.repo_id)
+                .await?
+                .ok_or_else(|| ApiError::BadRequest("Repository not found".to_string()))?;
+            let head = deployment
+                .git()
+                .get_head_info(std::path::Path::new(&repo.path))
+                .map_err(|_| {
+                    ApiError::BadRequest("Unable to read repository HEAD".to_string())
+                })?;
+            let reserved_prefix = format!("{}/", branch_prefix);
+            if head.branch.starts_with(&reserved_prefix) {
+                let (uncommitted_count, untracked_count) =
+                    match deployment.git().get_worktree_change_counts(&repo.path) {
+                        Ok((a, b)) => (a, b),
+                        Err(_) => (0, 0),
+                    };
+                if uncommitted_count > 0 || untracked_count > 0 {
+                    return Err(ApiError::BadRequest(format!(
+                        "Cannot use original repo because current branch '{}' matches reserved prefix '{}' and has uncommitted changes",
+                        head.branch, reserved_prefix
+                    )));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn get_tasks(
@@ -219,6 +278,14 @@ pub async fn create_task_and_start(
     }
 
     let pool = &deployment.db().pool;
+    let config = deployment.config().read().await.clone();
+    let use_original_repos = payload
+        .use_original_repos
+        .unwrap_or(config.default_use_original_repos);
+
+    if use_original_repos {
+        ensure_original_repo_available(&deployment, &payload.repos).await?;
+    }
 
     let task_id = Uuid::new_v4();
     let task = Task::create(pool, &payload.task, task_id).await?;
@@ -254,10 +321,6 @@ pub async fn create_task_and_start(
         .as_ref()
         .filter(|dir: &&String| !dir.is_empty())
         .cloned();
-    let use_original_repos = payload
-        .use_original_repos
-        .unwrap_or_else(default_use_original_repos);
-
     let workspace = Workspace::create(
         pool,
         &CreateWorkspace {

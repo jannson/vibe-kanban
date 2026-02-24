@@ -178,7 +178,7 @@
     "baseBranch": "Base branch",
     "creating": "Creating...",
     "description": "Start a new attempt with a coding agent. A git worktree and task branch will be created.",
-    "useWorktree": "worktree を使用（既定を上書き）",
+    "useWorktree": "worktree を使用",
     "useWorktreeHelper": "元のリポジトリではなく独立した worktree を作成します。",
     "error": "Failed to create attempt. Please try again.",
     "loadingBranches": "Loading branches...",

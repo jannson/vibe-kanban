@@ -461,6 +461,26 @@ export function GeneralSettings() {
               )}
             </p>
           </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="default-use-original-repos"
+              checked={draft?.default_use_original_repos ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ default_use_original_repos: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label
+                htmlFor="default-use-original-repos"
+                className="cursor-pointer"
+              >
+                {t('settings.general.git.defaultOriginalRepos.label')}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.git.defaultOriginalRepos.helper')}
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

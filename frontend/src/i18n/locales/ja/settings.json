@@ -133,6 +133,10 @@
             "invalidChars": "無効な文字が含まれています。",
             "controlChars": "制御文字が含まれています。"
           }
+        },
+        "defaultOriginalRepos": {
+          "label": "Default to Original Repos",
+          "helper": "When enabled, new tasks use original repos instead of worktrees by default."
         }
       },
       "pullRequests": {
