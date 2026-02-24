@@ -675,8 +675,19 @@ pub trait ContainerService {
         &self,
         id: &Uuid,
     ) -> Option<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>> {
+        let history_trace_enabled =
+            std::env::var("VIBE_KANBAN_HISTORY_TRACE").map(|v| v == "1").unwrap_or(false);
+        let start = std::time::Instant::now();
         // First try in-memory store (existing behavior)
         if let Some(store) = self.get_msg_store_by_id(id).await {
+            if history_trace_enabled {
+                tracing::debug!(
+                    target: "history",
+                    "normalized logs: in-memory store for {} ({}ms)",
+                    id,
+                    start.elapsed().as_millis()
+                );
+            }
             Some(
                 store
                     .history_plus_stream() // BoxStream<Result<LogMsg, io::Error>>
@@ -687,7 +698,15 @@ pub trait ContainerService {
                     .boxed(),
             )
         } else {
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: fallback to DB for {}",
+                    id
+                );
+            }
             // Fallback: load from DB and normalize
+            let db_start = std::time::Instant::now();
             let log_records =
                 match ExecutionProcessLogs::find_by_execution_id(&self.db().pool, *id).await {
                     Ok(records) if !records.is_empty() => records,
@@ -697,7 +716,17 @@ pub trait ContainerService {
                         return None;
                     }
                 };
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: db fetch {} records for {} ({}ms)",
+                    log_records.len(),
+                    id,
+                    db_start.elapsed().as_millis()
+                );
+            }
 
+            let parse_start = std::time::Instant::now();
             let raw_messages = match ExecutionProcessLogs::parse_logs(&log_records) {
                 Ok(msgs) => msgs,
                 Err(e) => {
@@ -705,6 +734,15 @@ pub trait ContainerService {
                     return None;
                 }
             };
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: parsed {} messages for {} ({}ms)",
+                    raw_messages.len(),
+                    id,
+                    parse_start.elapsed().as_millis()
+                );
+            }
 
             // Create temporary store and populate
             // Include JsonPatch messages (already normalized) and Stdout/Stderr (need normalization)
@@ -732,6 +770,7 @@ pub trait ContainerService {
             };
 
             // Get the workspace to determine correct directory
+            let workspace_start = std::time::Instant::now();
             let (workspace, _session) =
                 match process.parent_workspace_and_session(&self.db().pool).await {
                     Ok(Some((workspace, session))) => (workspace, session),
@@ -751,12 +790,29 @@ pub trait ContainerService {
                         return None;
                     }
                 };
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: loaded workspace for {} ({}ms)",
+                    id,
+                    workspace_start.elapsed().as_millis()
+                );
+            }
 
+            let ensure_start = std::time::Instant::now();
             if let Err(err) = self.ensure_container_exists(&workspace).await {
                 tracing::warn!(
                     "Failed to recreate worktree before log normalization for workspace {}: {}",
                     workspace.id,
                     err
+                );
+            }
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: ensure_container_exists for {} ({}ms)",
+                    id,
+                    ensure_start.elapsed().as_millis()
                 );
             }
 
@@ -773,6 +829,7 @@ pub trait ContainerService {
             };
 
             // Spawn normalizer on populated store
+            let normalize_start = std::time::Instant::now();
             match executor_action.typ() {
                 ExecutorActionType::CodingAgentInitialRequest(request) => {
                     let executor = ExecutorConfigs::get_cached()
@@ -793,6 +850,14 @@ pub trait ContainerService {
                     );
                     return None;
                 }
+            }
+            if history_trace_enabled {
+                tracing::info!(
+                    target: "history",
+                    "normalized logs: normalize_logs started for {} ({}ms total)",
+                    id,
+                    normalize_start.elapsed().as_millis()
+                );
             }
             Some(
                 temp_store

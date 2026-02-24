@@ -49,6 +49,19 @@ async fn main() -> Result<(), VibeKanbanError> {
     if !asset_dir().exists() {
         std::fs::create_dir_all(asset_dir())?;
     }
+    let db_path = asset_dir().join("db.sqlite");
+    tracing::info!("SQLite DB path: {}", db_path.display());
+
+    if let Ok(worktree_path) = std::env::var("VIBE_KANBAN_WORKTREE_PATH") {
+        if !worktree_path.trim().is_empty()
+            && !std::path::Path::new(&worktree_path).exists()
+        {
+            tracing::warn!(
+                "VIBE_KANBAN_WORKTREE_PATH does not exist: {} (worktree operations may be slow or fail)",
+                worktree_path
+            );
+        }
+    }
 
     let deployment = DeploymentImpl::new().await?;
     deployment.update_sentry_scope().await?;

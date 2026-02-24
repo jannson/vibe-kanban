@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEV_ASSETS_DIR="${SCRIPT_ROOT}/dev_assets"
+DEV_DB_PATH="${DEV_ASSETS_DIR}/db.sqlite"
+echo "Dev DB path (debug builds): ${DEV_DB_PATH}"
+
 # Load Cargo and any shell setup (nvm, etc.) if available.
 if [ -f "$HOME/.profile" ]; then
   # shellcheck disable=SC1090
