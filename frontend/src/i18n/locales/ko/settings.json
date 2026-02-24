@@ -137,6 +137,10 @@
         "defaultOriginalRepos": {
           "label": "Default to Original Repos",
           "helper": "When enabled, new tasks use original repos instead of worktrees by default."
+        },
+        "autoCommit": {
+          "label": "Auto-commit Changes",
+          "helper": "Automatically create a commit after a task completes."
         }
       },
       "pullRequests": {

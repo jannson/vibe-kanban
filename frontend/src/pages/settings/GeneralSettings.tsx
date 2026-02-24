@@ -481,6 +481,23 @@ export function GeneralSettings() {
               </p>
             </div>
           </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="auto-commit-enabled"
+              checked={draft?.auto_commit_enabled ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ auto_commit_enabled: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="auto-commit-enabled" className="cursor-pointer">
+                {t('settings.general.git.autoCommit.label')}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.git.autoCommit.helper')}
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

@@ -21,6 +21,10 @@ fn default_use_original_repos() -> bool {
     false
 }
 
+fn default_auto_commit_enabled() -> bool {
+    false
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Config {
     pub config_version: String,
@@ -40,6 +44,8 @@ pub struct Config {
     pub git_branch_prefix: String,
     #[serde(default = "default_use_original_repos")]
     pub default_use_original_repos: bool,
+    #[serde(default = "default_auto_commit_enabled")]
+    pub auto_commit_enabled: bool,
     #[serde(default)]
     pub showcases: ShowcaseState,
     #[serde(default = "default_pr_auto_description_enabled")]
@@ -68,6 +74,7 @@ impl Config {
             language: old_config.language,
             git_branch_prefix: old_config.git_branch_prefix,
             default_use_original_repos: default_use_original_repos(),
+            auto_commit_enabled: default_auto_commit_enabled(),
             showcases: old_config.showcases,
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
@@ -120,6 +127,7 @@ impl Default for Config {
             language: UiLanguage::default(),
             git_branch_prefix: default_git_branch_prefix(),
             default_use_original_repos: default_use_original_repos(),
+            auto_commit_enabled: default_auto_commit_enabled(),
             showcases: ShowcaseState::default(),
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
