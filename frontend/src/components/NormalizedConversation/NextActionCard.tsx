@@ -35,6 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
 
 type NextActionCardProps = {
   attemptId?: string;
@@ -62,7 +63,7 @@ export function NextActionCard({
   const { data: attempt } = useQuery({
     queryKey: ['attemptWithSession', attemptId],
     queryFn: () => attemptsApi.getWithSession(attemptId!),
-    enabled: !!attemptId && failed,
+    enabled: !!attemptId,
   });
   const { capabilities } = useUserSystem();
 
@@ -151,6 +152,7 @@ export function NextActionCard({
     : null;
 
   const editorName = getIdeName(config?.editor?.editor_type);
+  const gitEnabled = !isSubtaskOriginalRepoNoGitMode(task, attempt);
 
   // Necessary to prevent this component being displayed beyond fold within Virtualised List
   if (
@@ -350,21 +352,23 @@ export function NextActionCard({
                 </Tooltip>
               )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    onClick={handleGitActions}
-                    disabled={!attemptId}
-                    aria-label={t('attempt.gitActions')}
-                  >
-                    <GitBranch className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('attempt.gitActions')}</TooltipContent>
-              </Tooltip>
+              {gitEnabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={handleGitActions}
+                      disabled={!attemptId}
+                      aria-label={t('attempt.gitActions')}
+                    >
+                      <GitBranch className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('attempt.gitActions')}</TooltipContent>
+                </Tooltip>
+              )}
             </div>
           )}
         </div>

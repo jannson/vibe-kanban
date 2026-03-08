@@ -166,7 +166,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: hasProfiles,
-          useWorktree: true,
+          useWorktree: defaultUseWorktree,
         };
       case 'create':
       default:
@@ -303,14 +303,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       form.setFieldValue('autoStart', false);
     }
   }, [modal.visible, editMode, hasProfiles, form]);
-
-  useEffect(() => {
-    if (!modal.visible) return;
-    if (mode !== 'subtask') return;
-    if (!form.getFieldValue('useWorktree')) {
-      form.setFieldValue('useWorktree', true);
-    }
-  }, [modal.visible, mode, form]);
 
   useEffect(() => {
     if (!modal.visible) {
@@ -690,7 +682,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             </Label>
                             <p className="text-xs text-muted-foreground">
                               {mode === 'subtask'
-                                ? t('createAttemptDialog.useWorktreeSubtaskHelper')
+                                ? t('createAttemptDialog.useWorktreeHelper')
                                 : t('createAttemptDialog.useWorktreeHelper')}
                             </p>
                           </div>
@@ -700,7 +692,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             onCheckedChange={(checked) =>
                               field.handleChange(checked)
                             }
-                            disabled={isSubmitting || mode === 'subtask'}
+                            disabled={isSubmitting}
                             className="data-[state=checked]:bg-gray-900 dark:data-[state=checked]:bg-gray-100"
                             aria-label={t('createAttemptDialog.useWorktree')}
                           />

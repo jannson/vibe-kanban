@@ -154,6 +154,24 @@ impl LocalContainerService {
 
         Ok(repo_parent)
     }
+
+    async fn is_subtask_original_repo_no_git_mode(
+        &self,
+        workspace: &Workspace,
+        use_original_repos: bool,
+    ) -> Result<bool, ContainerError> {
+        if !use_original_repos {
+            return Ok(false);
+        }
+
+        let task = workspace
+            .parent_task(&self.db.pool)
+            .await?
+            .ok_or_else(|| ContainerError::Other(anyhow!("Task not found for workspace")))?;
+
+        Ok(task.parent_workspace_id.is_some())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         db: DBService,
@@ -1017,27 +1035,31 @@ impl ContainerService for LocalContainerService {
         )
         .await
         {
+            let no_git_mode = self
+                .is_subtask_original_repo_no_git_mode(workspace, true)
+                .await?;
             let workspace_dir = self.resolve_original_workspace_dir(&repositories).await?;
             let target_branches: HashMap<_, _> = workspace_repos
                 .iter()
                 .map(|wr| (wr.repo_id, wr.target_branch.clone()))
                 .collect();
-            let git = GitCli::new();
-
-            for repo in &repositories {
-                let base_branch = target_branches
-                    .get(&repo.id)
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| "main".to_string());
-                git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
-                    .map_err(|e| {
-                        ContainerError::Other(anyhow!(
-                            "Failed to checkout task branch in {}: {}",
-                            repo.path.display(),
-                            e
-                        ))
-                    })?;
+            if !no_git_mode {
+                let git = GitCli::new();
+                for repo in &repositories {
+                    let base_branch = target_branches
+                        .get(&repo.id)
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| "main".to_string());
+                    git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
+                        .map_err(|e| {
+                            ContainerError::Other(anyhow!(
+                                "Failed to checkout task branch in {}: {}",
+                                repo.path.display(),
+                                e
+                            ))
+                        })?;
+                }
             }
 
             Workspace::update_container_ref(
@@ -1125,6 +1147,9 @@ impl ContainerService for LocalContainerService {
         )
         .await
         {
+            let no_git_mode = self
+                .is_subtask_original_repo_no_git_mode(workspace, true)
+                .await?;
             let workspace_repos =
                 WorkspaceRepo::find_by_workspace_id(&self.db.pool, workspace.id).await?;
             let target_branches: HashMap<_, _> = workspace_repos
@@ -1132,22 +1157,23 @@ impl ContainerService for LocalContainerService {
                 .map(|wr| (wr.repo_id, wr.target_branch.clone()))
                 .collect();
             let workspace_dir = self.resolve_original_workspace_dir(&repositories).await?;
-            let git = GitCli::new();
-
-            for repo in &repositories {
-                let base_branch = target_branches
-                    .get(&repo.id)
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| "main".to_string());
-                git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
-                    .map_err(|e| {
-                        ContainerError::Other(anyhow!(
-                            "Failed to checkout task branch in {}: {}",
-                            repo.path.display(),
-                            e
-                        ))
-                    })?;
+            if !no_git_mode {
+                let git = GitCli::new();
+                for repo in &repositories {
+                    let base_branch = target_branches
+                        .get(&repo.id)
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| "main".to_string());
+                    git.checkout_branch_or_create(&repo.path, &workspace.branch, &base_branch)
+                        .map_err(|e| {
+                            ContainerError::Other(anyhow!(
+                                "Failed to checkout task branch in {}: {}",
+                                repo.path.display(),
+                                e
+                            ))
+                        })?;
+                }
             }
 
             if workspace.container_ref.is_none() {
@@ -1478,6 +1504,23 @@ impl ContainerService for LocalContainerService {
     }
 
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError> {
+        let default_use_original_repos = self.config.read().await.default_use_original_repos;
+        let use_original_repos = Self::resolve_use_original_repos(
+            &self.db,
+            &ctx.workspace,
+            default_use_original_repos,
+        )
+        .await;
+        if self
+            .is_subtask_original_repo_no_git_mode(&ctx.workspace, use_original_repos)
+            .await?
+        {
+            tracing::debug!(
+                "Skipping auto-commit: git is disabled for this subtask original-repo workspace"
+            );
+            return Ok(false);
+        }
+
         let auto_commit = self.config.read().await.auto_commit_enabled;
         if !auto_commit {
             tracing::debug!(

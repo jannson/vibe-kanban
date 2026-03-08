@@ -30,7 +30,9 @@ use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
-use crate::{DeploymentImpl, error::ApiError};
+use crate::{
+    DeploymentImpl, error::ApiError, routes::task_attempts::is_subtask_original_repo_no_git_mode,
+};
 
 #[derive(Debug, Deserialize, Serialize, TS)]
 pub struct CreateGitHubPrRequest {
@@ -189,6 +191,11 @@ pub async fn create_github_pr(
     Json(request): Json<CreateGitHubPrRequest>,
 ) -> Result<ResponseJson<ApiResponse<String, CreatePrError>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
@@ -361,6 +368,11 @@ pub async fn attach_existing_pr(
     Json(request): Json<AttachExistingPrRequest>,
 ) -> Result<ResponseJson<ApiResponse<AttachPrResponse>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let task = workspace
         .parent_task(pool)
@@ -462,6 +474,11 @@ pub async fn get_pr_comments(
     Query(query): Query<GetPrCommentsQuery>,
 ) -> Result<ResponseJson<ApiResponse<PrCommentsResponse, GetPrCommentsError>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     // Look up the specific repo using the multi-repo pattern
     let workspace_repo =

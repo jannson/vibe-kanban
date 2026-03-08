@@ -9,12 +9,14 @@ import type { ReactNode } from 'react';
 interface TaskAttemptPanelProps {
   attempt: WorkspaceWithSession | undefined;
   task: TaskWithAttemptStatus | null;
+  gitEnabled?: boolean;
   children: (sections: { logs: ReactNode; followUp: ReactNode }) => ReactNode;
 }
 
 const TaskAttemptPanel = ({
   attempt,
   task,
+  gitEnabled = true,
   children,
 }: TaskAttemptPanelProps) => {
   if (!attempt) {
@@ -33,7 +35,11 @@ const TaskAttemptPanel = ({
             <VirtualizedList key={attempt.id} attempt={attempt} task={task} />
           ),
           followUp: (
-            <TaskFollowUpSection task={task} session={attempt.session} />
+            <TaskFollowUpSection
+              task={task}
+              session={attempt.session}
+              gitEnabled={gitEnabled}
+            />
           ),
         })}
       </RetryUiProvider>

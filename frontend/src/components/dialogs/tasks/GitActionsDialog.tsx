@@ -19,6 +19,7 @@ import {
 import type { Merge, TaskWithAttemptStatus, Workspace } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
+import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
 
 export interface GitActionsDialogProps {
   attemptId: string;
@@ -35,10 +36,21 @@ function GitActionsDialogContent({
   task,
 }: GitActionsDialogContentProps) {
   const { t } = useTranslation('tasks');
-  const { data: branchStatus } = useBranchStatus(attempt.id);
+  const gitEnabled = !isSubtaskOriginalRepoNoGitMode(task, attempt);
+  const { data: branchStatus } = useBranchStatus(attempt.id, {
+    enabled: gitEnabled,
+  });
   const { isAttemptRunning } = useAttemptExecution(attempt.id);
   const { error: gitError } = useGitOperationsError();
   const { repos, selectedRepoId } = useAttemptRepo(attempt.id);
+
+  if (!gitEnabled) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        Git operations are disabled for this subtask attempt.
+      </div>
+    );
+  }
 
   const getSelectedRepoStatus = () => {
     const repoId = selectedRepoId ?? repos[0]?.id;

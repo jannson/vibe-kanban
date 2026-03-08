@@ -65,11 +65,13 @@ import type { Session } from 'shared/types';
 interface TaskFollowUpSectionProps {
   task: TaskWithAttemptStatus;
   session?: Session;
+  gitEnabled?: boolean;
 }
 
 export function TaskFollowUpSection({
   task,
   session,
+  gitEnabled = true,
 }: TaskFollowUpSectionProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
@@ -82,7 +84,7 @@ export function TaskFollowUpSection({
     useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
-    useBranchStatus(workspaceId);
+    useBranchStatus(workspaceId, { enabled: gitEnabled });
   const { repos, selectedRepoId } = useAttemptRepo(workspaceId);
 
   const getSelectedRepoId = useCallback(() => {
@@ -782,16 +784,18 @@ export function TaskFollowUpSection({
           </Button>
 
           {/* GitHub Comments button */}
-          <Button
-            onClick={handleGitHubCommentClick}
-            disabled={!isEditable}
-            size="sm"
-            variant="outline"
-            title="Insert GitHub comment"
-            aria-label="Insert GitHub comment"
-          >
-            <MessageSquare className="h-4 w-4" />
-          </Button>
+          {gitEnabled && (
+            <Button
+              onClick={handleGitHubCommentClick}
+              disabled={!isEditable}
+              size="sm"
+              variant="outline"
+              title="Insert GitHub comment"
+              aria-label="Insert GitHub comment"
+            >
+              <MessageSquare className="h-4 w-4" />
+            </Button>
+          )}
 
           {/* Scripts dropdown - only show if project has any scripts */}
           {hasAnyScript && (

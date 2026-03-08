@@ -24,6 +24,7 @@ import { StopShareTaskDialog } from '@/components/dialogs/tasks/StopShareTaskDia
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useLogsCollapse } from '@/contexts/LogsCollapseContext';
+import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
 
 import { useNavigate } from 'react-router-dom';
 import type { SharedTaskRecord } from '@/hooks/useProjectTasks';
@@ -51,6 +52,7 @@ export function ActionsDropdown({
   const hasTaskActions = Boolean(task);
   const isShared = Boolean(sharedTask);
   const canEditShared = (!isShared && !task?.shared_task_id) || isSignedIn;
+  const gitEnabled = !isSubtaskOriginalRepoNoGitMode(task, attempt);
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -222,18 +224,22 @@ export function ActionsDropdown({
               >
                 {t('actionsMenu.createSubtask')}
               </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!attempt?.id || !task}
-                onClick={handleGitActions}
-              >
-                {t('actionsMenu.gitActions')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!attempt?.id}
-                onClick={handleEditBranchName}
-              >
-                {t('actionsMenu.editBranchName')}
-              </DropdownMenuItem>
+              {gitEnabled && (
+                <DropdownMenuItem
+                  disabled={!attempt?.id || !task}
+                  onClick={handleGitActions}
+                >
+                  {t('actionsMenu.gitActions')}
+                </DropdownMenuItem>
+              )}
+              {gitEnabled && (
+                <DropdownMenuItem
+                  disabled={!attempt?.id}
+                  onClick={handleEditBranchName}
+                >
+                  {t('actionsMenu.editBranchName')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
             </>
           )}

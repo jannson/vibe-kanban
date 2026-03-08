@@ -47,7 +47,7 @@ use services::services::{
     git::{ConflictOp, GitCliError, GitServiceError},
     github::GitHubService,
 };
-use sqlx::Error as SqlxError;
+use sqlx::{Error as SqlxError, SqlitePool};
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -188,6 +188,21 @@ async fn ensure_original_repo_available(
     Ok(())
 }
 
+pub(crate) async fn is_subtask_original_repo_no_git_mode(
+    pool: &SqlitePool,
+    workspace: &Workspace,
+) -> Result<bool, ApiError> {
+    if workspace.use_original_repos != Some(true) {
+        return Ok(false);
+    }
+
+    let task = workspace
+        .parent_task(pool)
+        .await?
+        .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))?;
+    Ok(task.parent_workspace_id.is_some())
+}
+
 #[axum::debug_handler]
 pub async fn create_task_attempt(
     State(deployment): State<DeploymentImpl>,
@@ -220,8 +235,9 @@ pub async fn create_task_attempt(
     let use_original_repos = payload
         .use_original_repos
         .unwrap_or(config.default_use_original_repos);
+    let is_subtask = task.parent_workspace_id.is_some();
 
-    if use_original_repos {
+    if use_original_repos && !is_subtask {
         ensure_original_repo_available(&deployment, &payload.repos).await?;
     }
 
@@ -398,6 +414,11 @@ pub async fn merge_task_attempt(
     Json(request): Json<MergeTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
@@ -511,6 +532,11 @@ pub async fn commit_task_attempt(
     Json(request): Json<CommitTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
@@ -568,6 +594,11 @@ pub async fn push_task_attempt_branch(
     Json(request): Json<PushTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<(), PushError>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let github_service = GitHubService::new()?;
     github_service.check_token().await?;
@@ -606,6 +637,11 @@ pub async fn force_push_task_attempt_branch(
     Json(request): Json<PushTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<(), PushError>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let github_service = GitHubService::new()?;
     github_service.check_token().await?;
@@ -754,6 +790,9 @@ pub async fn get_task_attempt_branch_status(
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<RepoBranchStatus>>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Ok(ResponseJson(ApiResponse::success(Vec::new())));
+    }
 
     let repositories = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
     let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
@@ -921,9 +960,14 @@ pub async fn change_target_branch(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<ChangeTargetBranchRequest>,
 ) -> Result<ResponseJson<ApiResponse<ChangeTargetBranchResponse>>, ApiError> {
+    let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
     let repo_id = payload.repo_id;
     let new_target_branch = payload.new_target_branch;
-    let pool = &deployment.db().pool;
 
     let repo = Repo::find_by_id(pool, repo_id)
         .await?
@@ -974,6 +1018,12 @@ pub async fn rename_branch(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<RenameBranchRequest>,
 ) -> Result<ResponseJson<ApiResponse<RenameBranchResponse, RenameBranchError>>, ApiError> {
+    let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
     let new_branch_name = payload.new_branch_name.trim();
 
     if new_branch_name.is_empty() {
@@ -991,8 +1041,6 @@ pub async fn rename_branch(
             branch: workspace.branch.clone(),
         })));
     }
-
-    let pool = &deployment.db().pool;
 
     // Fail if workspace has an open PR in any repo
     let merges = Merge::find_by_workspace_id(pool, workspace.id).await?;
@@ -1115,6 +1163,11 @@ pub async fn rebase_task_attempt(
     Json(payload): Json<RebaseTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<(), GitOperationError>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, payload.repo_id)
@@ -1212,6 +1265,11 @@ pub async fn abort_conflicts_task_attempt(
     Json(payload): Json<AbortConflictsRequest>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
 
     let repo = Repo::find_by_id(pool, payload.repo_id)
         .await?
@@ -1655,4 +1713,212 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .nest("/{id}/images", images::router(deployment));
 
     Router::new().nest("/task-attempts", task_attempts_router)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_subtask_original_repo_no_git_mode;
+    use db::models::{
+        project::{CreateProject, Project},
+        task::CreateTask,
+        workspace::{CreateWorkspace, Workspace},
+    };
+    use sqlx::{SqlitePool, migrate::Migrator};
+    use uuid::Uuid;
+
+    static MIGRATOR: Migrator = sqlx::migrate!("../db/migrations");
+
+    async fn setup_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("failed to create sqlite memory pool");
+        MIGRATOR.run(&pool).await.expect("failed to run migrations");
+        pool
+    }
+
+    async fn create_project(pool: &SqlitePool) -> Project {
+        Project::create(
+            pool,
+            &CreateProject {
+                name: "test-project".to_string(),
+                workspace_root: None,
+                repositories: vec![],
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create project")
+    }
+
+    #[tokio::test]
+    async fn subtask_original_repo_mode_is_detected() {
+        let pool = setup_pool().await;
+        let project = create_project(&pool).await;
+
+        let parent_task = db::models::task::Task::create(
+            &pool,
+            &CreateTask {
+                project_id: project.id,
+                title: "parent".to_string(),
+                description: None,
+                status: None,
+                parent_workspace_id: None,
+                image_ids: None,
+                shared_task_id: None,
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create parent task");
+
+        let parent_workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "parent-branch".to_string(),
+                agent_working_dir: None,
+                use_original_repos: Some(true),
+            },
+            Uuid::new_v4(),
+            parent_task.id,
+        )
+        .await
+        .expect("failed to create parent workspace");
+
+        let child_task = db::models::task::Task::create(
+            &pool,
+            &CreateTask {
+                project_id: project.id,
+                title: "child".to_string(),
+                description: None,
+                status: None,
+                parent_workspace_id: Some(parent_workspace.id),
+                image_ids: None,
+                shared_task_id: None,
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create child task");
+
+        let child_workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "child-branch".to_string(),
+                agent_working_dir: None,
+                use_original_repos: Some(true),
+            },
+            Uuid::new_v4(),
+            child_task.id,
+        )
+        .await
+        .expect("failed to create child workspace");
+
+        let disabled = is_subtask_original_repo_no_git_mode(&pool, &child_workspace)
+            .await
+            .expect("mode check failed");
+        assert!(disabled);
+    }
+
+    #[tokio::test]
+    async fn non_subtask_or_non_original_repo_mode_is_not_detected() {
+        let pool = setup_pool().await;
+        let project = create_project(&pool).await;
+
+        let regular_task = db::models::task::Task::create(
+            &pool,
+            &CreateTask {
+                project_id: project.id,
+                title: "regular".to_string(),
+                description: None,
+                status: None,
+                parent_workspace_id: None,
+                image_ids: None,
+                shared_task_id: None,
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create regular task");
+
+        let regular_workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "regular-branch".to_string(),
+                agent_working_dir: None,
+                use_original_repos: Some(true),
+            },
+            Uuid::new_v4(),
+            regular_task.id,
+        )
+        .await
+        .expect("failed to create regular workspace");
+
+        let disabled = is_subtask_original_repo_no_git_mode(&pool, &regular_workspace)
+            .await
+            .expect("mode check failed");
+        assert!(!disabled);
+
+        let parent_task = db::models::task::Task::create(
+            &pool,
+            &CreateTask {
+                project_id: project.id,
+                title: "parent2".to_string(),
+                description: None,
+                status: None,
+                parent_workspace_id: None,
+                image_ids: None,
+                shared_task_id: None,
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create parent task");
+
+        let parent_workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "parent2-branch".to_string(),
+                agent_working_dir: None,
+                use_original_repos: Some(true),
+            },
+            Uuid::new_v4(),
+            parent_task.id,
+        )
+        .await
+        .expect("failed to create parent workspace");
+
+        let child_task = db::models::task::Task::create(
+            &pool,
+            &CreateTask {
+                project_id: project.id,
+                title: "child2".to_string(),
+                description: None,
+                status: None,
+                parent_workspace_id: Some(parent_workspace.id),
+                image_ids: None,
+                shared_task_id: None,
+            },
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("failed to create child task");
+
+        let child_non_original_workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "child2-branch".to_string(),
+                agent_working_dir: None,
+                use_original_repos: Some(false),
+            },
+            Uuid::new_v4(),
+            child_task.id,
+        )
+        .await
+        .expect("failed to create child workspace");
+
+        let disabled = is_subtask_original_repo_no_git_mode(&pool, &child_non_original_workspace)
+            .await
+            .expect("mode check failed");
+        assert!(!disabled);
+    }
 }

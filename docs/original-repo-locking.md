@@ -33,3 +33,36 @@ If DB detection does not show occupancy and the current HEAD branch of the origi
 2. DB rule is the hard gate for `use_original_repos` per repo.
 3. Branch prefix match only blocks when the repo is dirty (uncommitted or untracked changes).
 4. Worktree mode is the recommended fallback when a repo is occupied or blocked by local changes.
+
+## Subtask Original-Repo No-Git Mode (Planned)
+
+**Requirement**
+- Subtasks should be allowed to run without worktree (`use_original_repos = true`) in the current main project directory.
+- In this mode, the subtask must not perform git operations.
+- The UI must not show git operation/status prompts for that subtask attempt.
+
+**Design Decision**
+- Keep database schema unchanged.
+- Detect the mode from existing fields:
+  - `workspace.use_original_repos = true`
+  - parent task exists and `task.parent_workspace_id IS NOT NULL` (subtask)
+- Treat this combination as a special runtime mode: **subtask original-repo no-git**.
+
+**Backend Behavior**
+- Allow creation of subtask attempts in original repo mode even if the repo is already occupied by another original-repo attempt.
+- For subtask original-repo no-git mode:
+  - skip branch checkout/creation in original repo path setup
+  - skip auto-commit
+  - block git endpoints (commit/merge/push/rebase/rename branch/change target branch/abort conflicts/pr creation+attachment+comments)
+  - return empty branch status
+
+**Frontend Behavior**
+- Remove the forced worktree restriction for subtasks.
+- For subtask original-repo no-git mode:
+  - hide git actions/toolbar entry points
+  - disable branch-status polling and conflict UI that depends on it
+  - do not show git-related prompts in the subtask flow
+
+**Risk Assessment**
+- Main risk remains concurrent edits in the same working directory; this mode intentionally delegates conflict avoidance to users.
+- Change scope is moderate (frontend + backend route guards + container behavior), with low migration risk due to no DB changes.

@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
+import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -109,13 +110,14 @@ function DiffsPanelContainer({
   branchStatus: RepoBranchStatus[] | null;
 }) {
   const { isAttemptRunning } = useAttemptExecution(attempt?.id);
+  const gitEnabled = !isSubtaskOriginalRepoNoGitMode(selectedTask, attempt);
 
   return (
     <DiffsPanel
       key={attempt?.id}
       selectedAttempt={attempt}
       gitOps={
-        attempt && selectedTask
+        attempt && selectedTask && gitEnabled
           ? {
               task: selectedTask,
               branchStatus: branchStatus ?? null,
@@ -284,8 +286,14 @@ export function ProjectTasks() {
   const effectiveAttemptId = attemptId === 'latest' ? undefined : attemptId;
   const isTaskView = !!taskId && !effectiveAttemptId;
   const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
+  const isSubtaskOriginalNoGit = isSubtaskOriginalRepoNoGitMode(
+    selectedTask,
+    attempt
+  );
 
-  const { data: branchStatus } = useBranchStatus(attempt?.id);
+  const { data: branchStatus } = useBranchStatus(attempt?.id, {
+    enabled: !isSubtaskOriginalNoGit,
+  });
 
   const rawMode = searchParams.get('view') as LayoutMode;
   const mode: LayoutMode =
@@ -962,7 +970,11 @@ export function ProjectTasks() {
       {isTaskView ? (
         <TaskPanel task={selectedTask} />
       ) : (
-        <TaskAttemptPanel attempt={attempt} task={selectedTask}>
+        <TaskAttemptPanel
+          attempt={attempt}
+          task={selectedTask}
+          gitEnabled={!isSubtaskOriginalNoGit}
+        >
           {({ logs, followUp }) => (
             <>
               <GitErrorBanner />

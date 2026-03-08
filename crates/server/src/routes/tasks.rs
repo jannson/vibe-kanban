@@ -282,8 +282,9 @@ pub async fn create_task_and_start(
     let use_original_repos = payload
         .use_original_repos
         .unwrap_or(config.default_use_original_repos);
+    let is_subtask = payload.task.parent_workspace_id.is_some();
 
-    if use_original_repos {
+    if use_original_repos && !is_subtask {
         ensure_original_repo_available(&deployment, &payload.repos).await?;
     }
 
