@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'frontend-check'
+description: 'Run frontend check pipeline (package.json: frontend:check)'
+tags: ['frontend', 'check']
+run:
+  cmds:
+    - 'pnpm run frontend:check'

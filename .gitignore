@@ -86,3 +86,6 @@ vibe-kanban-cloud/
 
 .jj
 *.har
+
+.it-runner/states
+

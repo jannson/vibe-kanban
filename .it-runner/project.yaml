@@ -1,0 +1,8 @@
+name: 'vibe-kanban'
+tasksDir: '.it-runner/tasks'
+logsDir: '${DATA_ROOT}/logs'
+cacheDir: '${DATA_ROOT}/cache'
+envFiles:
+  - '.it-runner/envs/shared.env'
+  - '.it-runner/envs/secrets.env'
+  - '.it-runner/.env.local'

@@ -135,6 +135,13 @@
     "preview": "Preview",
     "relatedTasks": "Related tasks"
   },
+  "closeSessionConfirm": {
+    "title": "¿Cambiar de rama antes de cerrar?",
+    "message": "Este intento de tarea ya se fusionó, pero el repositorio sigue en la rama de la tarea. ¿Quieres volver a '{{targetBranch}}' antes de cerrar?",
+    "switchAndClose": "Cambiar y cerrar",
+    "closeOnly": "Solo cerrar",
+    "switchFailed": "No se pudo cambiar a la rama de destino"
+  },
   "branches": {
     "changeTarget": {
       "dialog": {

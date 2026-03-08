@@ -1,0 +1,10 @@
+include:
+  - '../_includes/base.yaml'
+name: 'remote-dev'
+description: 'Run remote docker-compose dev stack (package.json: remote:dev)'
+tags: ['remote', 'docker', 'long-running']
+watch:
+  stateFile: '${PROJECT_ROOT}/.it-runner/states/remote-dev.STATE'
+processes:
+  - name: 'remote-dev'
+    cmd: 'pnpm run remote:dev'

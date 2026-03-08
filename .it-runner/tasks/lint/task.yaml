@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'lint'
+description: 'Run frontend + backend lint checks (package.json: lint)'
+tags: ['lint', 'quality']
+run:
+  cmds:
+    - 'pnpm run lint'

@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { AlertTriangle, Plus, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { tasksApi } from '@/lib/api';
+import { attemptsApi, ApiError } from '@/lib/api';
 import type { RepoBranchStatus, Workspace } from 'shared/types';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { FeatureShowcaseDialog } from '@/components/dialogs/global/FeatureShowcaseDialog';
@@ -72,6 +73,7 @@ import {
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
 import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
+import { ConfirmDialog } from '@/components/dialogs/shared/ConfirmDialog';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -640,6 +642,58 @@ export function ProjectTasks() {
     }
   }, [projectId, navigate]);
 
+  const handleCloseAttemptPanel = useCallback(async () => {
+    if (!projectId) return;
+    if (!attempt?.id) {
+      navigate(`/projects/${projectId}/tasks`, { replace: true });
+      return;
+    }
+
+    const navigateToTasks = () =>
+      navigate(`/projects/${projectId}/tasks`, { replace: true });
+
+    let guard: { should_prompt: boolean; target_branch: string | null };
+    try {
+      guard = await attemptsApi.getCloseGuard(attempt.id);
+    } catch (error) {
+      console.error('Failed to evaluate close guard:', error);
+      navigateToTasks();
+      return;
+    }
+
+    if (!guard.should_prompt) {
+      navigateToTasks();
+      return;
+    }
+
+    const targetBranch = guard.target_branch ?? 'target branch';
+    const result = await ConfirmDialog.show({
+      title: t('closeSessionConfirm.title'),
+      message: t('closeSessionConfirm.message', {
+        targetBranch,
+      }),
+      confirmText: t('closeSessionConfirm.switchAndClose'),
+      cancelText: t('closeSessionConfirm.closeOnly'),
+      variant: 'info',
+    });
+
+    if (result === 'confirmed') {
+      try {
+        await attemptsApi.switchToTargetBranchBeforeClose(attempt.id);
+      } catch (error) {
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : t('closeSessionConfirm.switchFailed');
+        console.error('Failed to switch to target branch before close:', error);
+        window.alert(message);
+        return;
+      }
+    }
+
+    navigateToTasks();
+  }, [attempt?.id, navigate, projectId]);
+
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {
       if (!projectId) return;
@@ -891,9 +945,7 @@ export function ProjectTasks() {
             task={selectedTask}
             sharedTask={getSharedTask(selectedTask)}
             attempt={attempt ?? null}
-            onClose={() =>
-              navigate(`/projects/${projectId}/tasks`, { replace: true })
-            }
+            onClose={() => void handleCloseAttemptPanel()}
           />
         )
       }

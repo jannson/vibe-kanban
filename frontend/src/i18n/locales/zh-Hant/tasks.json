@@ -317,6 +317,13 @@
     "diffs": "差異",
     "relatedTasks": "相關任務"
   },
+  "closeSessionConfirm": {
+    "title": "關閉前切換分支？",
+    "message": "此任務嘗試已合併，但目前倉庫仍停留在任務分支。關閉前是否切回 '{{targetBranch}}'？",
+    "switchAndClose": "切換並關閉",
+    "closeOnly": "僅關閉",
+    "switchFailed": "切換目標分支失敗"
+  },
   "actionsMenu": {
     "attempt": "嘗試",
     "openInIde": "在 IDE 中開啟嘗試",

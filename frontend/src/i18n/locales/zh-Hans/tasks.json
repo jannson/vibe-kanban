@@ -324,6 +324,13 @@
     "diffs": "差异",
     "relatedTasks": "相关任务"
   },
+  "closeSessionConfirm": {
+    "title": "关闭前切换分支？",
+    "message": "该任务尝试已合并，但当前仓库仍停留在任务分支。关闭前是否切回 '{{targetBranch}}'？",
+    "switchAndClose": "切换并关闭",
+    "closeOnly": "仅关闭",
+    "switchFailed": "切换目标分支失败"
+  },
   "actionsMenu": {
     "attempt": "尝试",
     "collapseAllRuns": "折叠会话",

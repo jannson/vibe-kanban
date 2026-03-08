@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'build-npx'
+description: 'Build npx CLI package artifacts (package.json: build:npx)'
+tags: ['build', 'npx']
+run:
+  cmds:
+    - 'pnpm run build:npx'

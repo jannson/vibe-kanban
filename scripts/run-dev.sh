@@ -5,21 +5,41 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV_ASSETS_DIR="${SCRIPT_ROOT}/dev_assets"
 DEV_DB_PATH="${DEV_ASSETS_DIR}/db.sqlite"
 echo "Dev DB path (debug builds): ${DEV_DB_PATH}"
+HOME_DIR="${HOME:-}"
 
 # Load Cargo and any shell setup (nvm, etc.) if available.
-if [ -f "$HOME/.profile" ]; then
+if [ -n "${HOME_DIR}" ] && [ -f "${HOME_DIR}/.profile" ]; then
   # shellcheck disable=SC1090
-  source "$HOME/.profile"
+  source "${HOME_DIR}/.profile"
 fi
 
 # Bind backend to all interfaces for remote access.
 export HOST="${HOST:-0.0.0.0}"
 
+# Port helpers.
+is_port_in_use() {
+  local port="$1"
+  ss -ltnH "sport = :${port}" 2>/dev/null | grep -q .
+}
+
+print_port_conflict() {
+  local name="$1"
+  local port="$2"
+  echo "Port conflict: ${name} requires :${port}, but it is already in use." >&2
+  echo "Current listeners on :${port}:" >&2
+  ss -ltnp "sport = :${port}" >&2 || true
+}
+
 # Ensure dev config lives in a consistent location.
 ORIGINAL_XDG_DATA_HOME="${XDG_DATA_HOME:-}"
-export XDG_DATA_HOME="${XDG_DATA_HOME:-/config/vibe-kanban/repo-dev}"
+DEFAULT_XDG_DATA_HOME="/config/vibe-kanban/repo-dev"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${DEFAULT_XDG_DATA_HOME}}"
 if [ -z "${ORIGINAL_XDG_DATA_HOME}" ]; then
-  ORIGINAL_XDG_DATA_HOME="${HOME}/.local/share"
+  if [ -n "${HOME_DIR}" ]; then
+    ORIGINAL_XDG_DATA_HOME="${HOME_DIR}/.local/share"
+  else
+    ORIGINAL_XDG_DATA_HOME="/tmp"
+  fi
 fi
 
 OLD_CONFIG_DIR="${ORIGINAL_XDG_DATA_HOME}/vibe-kanban"
@@ -56,8 +76,30 @@ export VIBE_KANBAN_WORKTREE_PATH="${VIBE_KANBAN_WORKTREE_PATH:-/projects/workspa
 export BASIC_AUTH_USER="${BASIC_AUTH_USER:-admin}"
 export BASIC_AUTH_PASS="${BASIC_AUTH_PASS:-admin}"
 export PROXY_LISTEN_ADDR="${PROXY_LISTEN_ADDR:-:3002}"
+PROXY_PORT="${PROXY_LISTEN_ADDR##*:}"
 export FRONTEND_UPSTREAM="${FRONTEND_UPSTREAM:-http://127.0.0.1:${FRONTEND_PORT}}"
 export BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://127.0.0.1:${BACKEND_PORT}}"
+
+if [ "${FRONTEND_PORT}" = "${BACKEND_PORT}" ] ||
+  [ "${FRONTEND_PORT}" = "${PROXY_PORT}" ] ||
+  [ "${BACKEND_PORT}" = "${PROXY_PORT}" ]; then
+  echo "Port conflict: FRONTEND_PORT (${FRONTEND_PORT}), BACKEND_PORT (${BACKEND_PORT}), and PROXY_LISTEN_ADDR (${PROXY_LISTEN_ADDR}) must be distinct." >&2
+  echo "Set FRONTEND_PORT/BACKEND_PORT/PROXY_LISTEN_ADDR to different values and retry." >&2
+  exit 1
+fi
+
+if is_port_in_use "${FRONTEND_PORT}"; then
+  print_port_conflict "frontend" "${FRONTEND_PORT}"
+  exit 1
+fi
+if is_port_in_use "${BACKEND_PORT}"; then
+  print_port_conflict "backend" "${BACKEND_PORT}"
+  exit 1
+fi
+if is_port_in_use "${PROXY_PORT}"; then
+  print_port_conflict "proxy" "${PROXY_PORT}"
+  exit 1
+fi
 
 # Avoid global git URL rewrites (https -> ssh) when fetching dependencies.
 export CARGO_NET_GIT_FETCH_WITH_CLI=true

@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'format'
+description: 'Run rustfmt + frontend formatter (package.json: format)'
+tags: ['format', 'quality']
+run:
+  cmds:
+    - 'pnpm run format'

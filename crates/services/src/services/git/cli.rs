@@ -125,6 +125,12 @@ impl GitCli {
         }
     }
 
+    /// Checkout an existing branch.
+    pub fn checkout_branch(&self, repo_path: &Path, branch: &str) -> Result<(), GitCliError> {
+        self.ensure_available()?;
+        self.git(repo_path, ["checkout", branch]).map(|_| ())
+    }
+
     /// Run `git -C <repo> worktree remove <path>`
     pub fn worktree_remove(
         &self,

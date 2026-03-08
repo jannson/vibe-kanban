@@ -66,3 +66,65 @@ If DB detection does not show occupancy and the current HEAD branch of the origi
 **Risk Assessment**
 - Main risk remains concurrent edits in the same working directory; this mode intentionally delegates conflict avoidance to users.
 - Change scope is moderate (frontend + backend route guards + container behavior), with low migration risk due to no DB changes.
+
+## Loading History Slow: Root Cause and Impact Analysis
+
+**Observed Symptom**
+- Opening task attempt detail shows `Loading History` for a long time.
+- User perception is "Git is stuck" while viewing history.
+
+**Confirmed Call Chain**
+1. Frontend `VirtualizedList` enters loading state and waits for history stream completion.
+2. `useConversationHistory` sequentially loads historic execution processes.
+3. Backend `stream_normalized_logs` uses DB fallback for processes not in memory.
+4. DB fallback calls `ensure_container_exists(workspace)` before normalization.
+5. In original-repo/worktree paths, `ensure_container_exists` may run branch checkout/create (`git checkout_branch_or_create`) and workspace restoration.
+
+This means "view history" can trigger workspace/Git operations indirectly.
+
+**Why it appears only on some projects/tasks**
+- Only specific execution processes hit normalized-log DB fallback.
+- If workspace/container is cold or missing, `ensure_container_exists` does real recovery work.
+- If repo state is large/slow/locked, checkout/restore latency is visible as prolonged `Loading History`.
+
+## If We Remove `ensure_container_exists` From History Path
+
+### Direct Benefits
+- History loading no longer blocks on workspace restore or Git checkout.
+- Significantly lower latency variance for task detail page.
+- Better isolation: "read history" remains read-only behavior.
+
+### Negative Consequences
+1. **Normalization may use invalid working directory**
+- Current code computes effective dir from workspace path after `ensure_container_exists`.
+- Without restoration, that path can be empty/nonexistent/stale.
+- Some executor normalizers rely on repo-relative context and may produce incomplete or degraded normalized entries.
+
+2. **Historic replay can fail for old attempts with missing workspace refs**
+- For attempts whose `container_ref` is gone, normalization may fail early.
+- Result: empty history or partial history for those attempts.
+
+3. **Behavior divergence between in-memory and DB fallback**
+- In-memory path may still work while fallback path degrades, causing inconsistent UX across attempts.
+
+4. **Potential loss of patch fidelity**
+- Features dependent on normalization metadata (tool blocks, structured entries, file-related patches) can degrade when effective dir context is unavailable.
+
+### Recommendation
+- Do **not** blindly remove `ensure_container_exists`.
+- Prefer introducing a **history-safe mode**:
+  - default: skip workspace/Git restore on history read
+  - attempt normalization with best-effort current dir
+  - if normalization requires workspace context and fails, return a degraded but fast stream (raw/stdout-stderr-based entries) instead of blocking
+  - add trace logs for fallback cause and timing
+
+This keeps history page responsive while preserving compatibility for entries that truly need workspace context.
+
+## Implemented Minimal Guard (Current)
+
+- `stream_normalized_logs` DB fallback now has a fast-path behavior:
+  - default skips `ensure_container_exists` during history read
+  - if workspace dir or executor action context is unavailable, fallback to raw->JsonPatch replay instead of returning empty/slow-failing
+- Environment flag:
+  - `VIBE_KANBAN_HISTORY_SKIP_ENSURE_CONTAINER=0` can restore old behavior (call `ensure_container_exists` in history fallback path)
+  - unset (default) uses fast-path (skip ensure)

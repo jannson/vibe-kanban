@@ -57,6 +57,31 @@ use crate::services::{
 };
 pub type ContainerRef = String;
 
+fn raw_messages_to_json_patch_stream(
+    raw_messages: Vec<LogMsg>,
+) -> futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>> {
+    let mut index = 0usize;
+    let mut converted = Vec::with_capacity(raw_messages.len() + 1);
+    for msg in raw_messages {
+        match msg {
+            LogMsg::Stdout(content) => {
+                let patch = ConversationPatch::add_stdout(index, content);
+                index += 1;
+                converted.push(LogMsg::JsonPatch(patch));
+            }
+            LogMsg::Stderr(content) => {
+                let patch = ConversationPatch::add_stderr(index, content);
+                index += 1;
+                converted.push(LogMsg::JsonPatch(patch));
+            }
+            LogMsg::JsonPatch(patch) => converted.push(LogMsg::JsonPatch(patch)),
+            LogMsg::SessionId(_) | LogMsg::Finished => {}
+        }
+    }
+    converted.push(LogMsg::Finished);
+    futures::stream::iter(converted.into_iter().map(Ok::<_, std::io::Error>)).boxed()
+}
+
 #[derive(Debug, Error)]
 pub enum ContainerError {
     #[error(transparent)]
@@ -675,8 +700,9 @@ pub trait ContainerService {
         &self,
         id: &Uuid,
     ) -> Option<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>> {
-        let history_trace_enabled =
-            std::env::var("VIBE_KANBAN_HISTORY_TRACE").map(|v| v == "1").unwrap_or(false);
+        let history_trace_enabled = std::env::var("VIBE_KANBAN_HISTORY_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         let start = std::time::Instant::now();
         // First try in-memory store (existing behavior)
         if let Some(store) = self.get_msg_store_by_id(id).await {
@@ -744,28 +770,20 @@ pub trait ContainerService {
                 );
             }
 
-            // Create temporary store and populate
-            // Include JsonPatch messages (already normalized) and Stdout/Stderr (need normalization)
-            let temp_store = Arc::new(MsgStore::new());
-            for msg in raw_messages {
-                if matches!(
-                    msg,
-                    LogMsg::Stdout(_) | LogMsg::Stderr(_) | LogMsg::JsonPatch(_)
-                ) {
-                    temp_store.push(msg);
-                }
-            }
-            temp_store.push_finished();
+            let raw_fallback_messages = raw_messages.clone();
+            let skip_ensure_container = std::env::var("VIBE_KANBAN_HISTORY_SKIP_ENSURE_CONTAINER")
+                .map(|v| v != "0")
+                .unwrap_or(true);
 
             let process = match ExecutionProcess::find_by_id(&self.db().pool, *id).await {
                 Ok(Some(process)) => process,
                 Ok(None) => {
                     tracing::error!("No execution process found for ID: {}", id);
-                    return None;
+                    return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
                 }
                 Err(e) => {
                     tracing::error!("Failed to fetch execution process {}: {}", id, e);
-                    return None;
+                    return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
                 }
             };
 
@@ -779,7 +797,7 @@ pub trait ContainerService {
                             "No workspace/session found for session ID: {}",
                             process.session_id
                         );
-                        return None;
+                        return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
                     }
                     Err(e) => {
                         tracing::error!(
@@ -787,7 +805,7 @@ pub trait ContainerService {
                             process.session_id,
                             e
                         );
-                        return None;
+                        return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
                     }
                 };
             if history_trace_enabled {
@@ -799,24 +817,34 @@ pub trait ContainerService {
                 );
             }
 
-            let ensure_start = std::time::Instant::now();
-            if let Err(err) = self.ensure_container_exists(&workspace).await {
-                tracing::warn!(
-                    "Failed to recreate worktree before log normalization for workspace {}: {}",
-                    workspace.id,
-                    err
-                );
-            }
-            if history_trace_enabled {
-                tracing::info!(
-                    target: "history",
-                    "normalized logs: ensure_container_exists for {} ({}ms)",
-                    id,
-                    ensure_start.elapsed().as_millis()
-                );
+            if !skip_ensure_container {
+                let ensure_start = std::time::Instant::now();
+                if let Err(err) = self.ensure_container_exists(&workspace).await {
+                    tracing::warn!(
+                        "Failed to recreate worktree before log normalization for workspace {}: {}",
+                        workspace.id,
+                        err
+                    );
+                }
+                if history_trace_enabled {
+                    tracing::info!(
+                        target: "history",
+                        "normalized logs: ensure_container_exists for {} ({}ms)",
+                        id,
+                        ensure_start.elapsed().as_millis()
+                    );
+                }
             }
 
             let current_dir = self.workspace_to_current_dir(&workspace);
+            if current_dir.as_os_str().is_empty() || !current_dir.exists() {
+                tracing::warn!(
+                    "History fallback: workspace dir unavailable for {}, using raw->jsonpatch stream (dir={})",
+                    id,
+                    current_dir.display()
+                );
+                return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
+            }
 
             let executor_action = if let Ok(executor_action) = process.executor_action() {
                 executor_action
@@ -825,8 +853,21 @@ pub trait ContainerService {
                     "Failed to parse executor action: {:?}",
                     process.executor_action()
                 );
-                return None;
+                return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
             };
+
+            // Create temporary store and populate
+            // Include JsonPatch messages (already normalized) and Stdout/Stderr (need normalization)
+            let temp_store = Arc::new(MsgStore::new());
+            for msg in raw_messages {
+                if matches!(
+                    msg,
+                    LogMsg::Stdout(_) | LogMsg::Stderr(_) | LogMsg::JsonPatch(_)
+                ) {
+                    temp_store.push(msg);
+                }
+            }
+            temp_store.push_finished();
 
             // Spawn normalizer on populated store
             let normalize_start = std::time::Instant::now();
@@ -848,7 +889,7 @@ pub trait ContainerService {
                         "Executor action doesn't support log normalization: {:?}",
                         process.executor_action()
                     );
-                    return None;
+                    return Some(raw_messages_to_json_patch_stream(raw_fallback_messages));
                 }
             }
             if history_trace_enabled {

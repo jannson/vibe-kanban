@@ -1,0 +1,5 @@
+logs/
+cache/
+envs/secrets.env
+configs/*.local.*
+tasks/**/task.local.yaml

@@ -1,0 +1,9 @@
+include:
+  - '../_includes/base.yaml'
+name: 'clean'
+description: 'Remove it-runner local logs/cache artifacts safely'
+tags: ['clean', 'maintenance']
+run:
+  cmds:
+    - 'rm -rf "${PROJECT_ROOT}/.it-runner/logs" "${PROJECT_ROOT}/.it-runner/cache"'
+    - 'mkdir -p "${PROJECT_ROOT}/.it-runner/logs" "${PROJECT_ROOT}/.it-runner/cache"'

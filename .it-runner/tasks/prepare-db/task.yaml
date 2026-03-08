@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'prepare-db'
+description: 'Prepare SQLx offline data (package.json: prepare-db)'
+tags: ['db', 'sqlx']
+run:
+  cmds:
+    - 'pnpm run prepare-db'

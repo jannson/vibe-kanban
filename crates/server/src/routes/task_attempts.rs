@@ -1677,6 +1677,135 @@ pub async fn get_task_attempt_repos(
     Ok(ResponseJson(ApiResponse::success(repos)))
 }
 
+#[derive(Debug, Serialize)]
+pub struct CloseSessionGuardResponse {
+    pub should_prompt: bool,
+    pub target_branch: Option<String>,
+}
+
+pub async fn get_close_session_guard(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<CloseSessionGuardResponse>>, ApiError> {
+    let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
+            should_prompt: false,
+            target_branch: None,
+        })));
+    }
+
+    let has_running_non_dev = ExecutionProcess::has_running_non_dev_server_processes_for_workspace(
+        pool,
+        workspace.id,
+    )
+    .await?;
+    let has_running_dev = !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
+        .await?
+        .is_empty();
+    let has_running_processes = has_running_non_dev || has_running_dev;
+    if has_running_processes {
+        return Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
+            should_prompt: false,
+            target_branch: None,
+        })));
+    }
+
+    let repos = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+    let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
+    let target_branches: HashMap<_, _> = workspace_repos
+        .iter()
+        .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+        .collect();
+
+    let target_branch = workspace_repos
+        .first()
+        .map(|wr| wr.target_branch.clone())
+        .filter(|b| !b.is_empty());
+
+    let container_ref = deployment
+        .container()
+        .ensure_container_exists(&workspace)
+        .await?;
+    let workspace_path = PathBuf::from(container_ref);
+
+    let mut has_merged_result = false;
+    let mut still_on_task_branch = false;
+
+    for repo in repos {
+        let repo_merges = Merge::find_by_workspace_and_repo_id(pool, workspace.id, repo.id).await?;
+        if repo_merges.into_iter().any(|m| {
+            matches!(m, Merge::Direct(_))
+                || matches!(m, Merge::Pr(PrMerge { pr_info: PullRequestInfo { status: MergeStatus::Merged, .. }, .. }))
+        }) {
+            has_merged_result = true;
+        }
+
+        if target_branches.contains_key(&repo.id) {
+            let worktree_path = workspace_path.join(&repo.name);
+            if let Ok(head) = deployment.git().get_head_info(&worktree_path)
+                && head.branch == workspace.branch
+            {
+                still_on_task_branch = true;
+            }
+        }
+    }
+
+    Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
+        should_prompt: has_merged_result && still_on_task_branch && !has_running_processes,
+        target_branch,
+    })))
+}
+
+pub async fn switch_to_target_branch_before_close(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
+
+    let has_running_non_dev = ExecutionProcess::has_running_non_dev_server_processes_for_workspace(
+        pool,
+        workspace.id,
+    )
+    .await?;
+    let has_running_dev = !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
+        .await?
+        .is_empty();
+    if has_running_non_dev || has_running_dev {
+        return Err(ApiError::BadRequest(
+            "Cannot switch branches while execution processes are running".to_string(),
+        ));
+    }
+
+    let repos = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+    let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
+    let target_branches: HashMap<_, _> = workspace_repos
+        .iter()
+        .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+        .collect();
+
+    let container_ref = deployment
+        .container()
+        .ensure_container_exists(&workspace)
+        .await?;
+    let workspace_path = PathBuf::from(container_ref);
+
+    for repo in repos {
+        let Some(target_branch) = target_branches.get(&repo.id) else {
+            continue;
+        };
+        let worktree_path = workspace_path.join(&repo.name);
+        deployment.git().checkout_branch(&worktree_path, target_branch)?;
+    }
+
+    Ok(ResponseJson(ApiResponse::success(())))
+}
+
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_attempt_id_router = Router::new()
         .route("/", get(get_task_attempt))
@@ -1702,6 +1831,11 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/change-target-branch", post(change_target_branch))
         .route("/rename-branch", post(rename_branch))
         .route("/repos", get(get_task_attempt_repos))
+        .route("/close-guard", get(get_close_session_guard))
+        .route(
+            "/switch-to-target-branch",
+            post(switch_to_target_branch_before_close),
+        )
         .layer(from_fn_with_state(
             deployment.clone(),
             load_workspace_middleware,

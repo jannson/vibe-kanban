@@ -1,0 +1,13 @@
+name: 'dev'
+version: '1'
+description: 'Run unified dev script (scripts/run-dev.sh)'
+tags: ['dev', 'long-running']
+watch:
+  stateFile: '.it-runner/states/dev.STATE'
+logs:
+  rootDir: '/config/demo-data/vibe-kanban/logs'
+workspace:
+  workdir: '.'
+processes:
+  - name: 'dev'
+    cmd: '.it-runner/scripts/run-dev-fixed-ports.sh'

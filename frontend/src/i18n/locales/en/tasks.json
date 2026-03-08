@@ -324,6 +324,13 @@
     "diffs": "Diffs",
     "relatedTasks": "Related tasks"
   },
+  "closeSessionConfirm": {
+    "title": "Switch branch before closing?",
+    "message": "This task attempt is already merged, and your repository is still on the task branch. Switch back to '{{targetBranch}}' before closing?",
+    "switchAndClose": "Switch and close",
+    "closeOnly": "Close only",
+    "switchFailed": "Failed to switch target branch"
+  },
   "actionsMenu": {
     "attempt": "Attempt",
     "collapseAllRuns": "Collapse sessions",

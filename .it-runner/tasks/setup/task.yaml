@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'setup'
+description: 'Install JS dependencies with pnpm'
+tags: ['setup', 'deps']
+run:
+  cmds:
+    - 'pnpm i'

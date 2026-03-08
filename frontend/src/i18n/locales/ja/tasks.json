@@ -135,6 +135,13 @@
     "preview": "Preview",
     "relatedTasks": "Related tasks"
   },
+  "closeSessionConfirm": {
+    "title": "閉じる前にブランチを切り替えますか？",
+    "message": "このタスク試行はすでにマージされていますが、現在のリポジトリはまだタスクブランチのままです。閉じる前に '{{targetBranch}}' へ戻しますか？",
+    "switchAndClose": "切り替えて閉じる",
+    "closeOnly": "閉じるのみ",
+    "switchFailed": "ターゲットブランチへの切り替えに失敗しました"
+  },
   "branches": {
     "changeTarget": {
       "dialog": {

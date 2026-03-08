@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'backend-check'
+description: 'Run backend cargo check (package.json: backend:check)'
+tags: ['backend', 'check', 'rust']
+run:
+  cmds:
+    - 'pnpm run backend:check'

@@ -135,6 +135,13 @@
     "preview": "Preview",
     "relatedTasks": "Related tasks"
   },
+  "closeSessionConfirm": {
+    "title": "닫기 전에 브랜치를 전환할까요?",
+    "message": "이 작업 시도는 이미 병합되었지만 저장소가 아직 작업 브랜치에 있습니다. 닫기 전에 '{{targetBranch}}'로 전환할까요?",
+    "switchAndClose": "전환 후 닫기",
+    "closeOnly": "닫기만",
+    "switchFailed": "대상 브랜치로 전환하지 못했습니다"
+  },
   "branches": {
     "changeTarget": {
       "dialog": {

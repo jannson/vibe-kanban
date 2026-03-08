@@ -1,0 +1,3 @@
+version: '1'
+workspace:
+  workdir: '${PROJECT_ROOT}'

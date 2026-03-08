@@ -1059,6 +1059,12 @@ impl GitService {
         }
     }
 
+    pub fn checkout_branch(&self, repo_path: &Path, branch: &str) -> Result<(), GitServiceError> {
+        let git_cli = GitCli::new();
+        git_cli.checkout_branch(repo_path, branch)?;
+        Ok(())
+    }
+
     /// Get the commit OID (as hex string) for a given branch without modifying HEAD
     pub fn get_branch_oid(
         &self,

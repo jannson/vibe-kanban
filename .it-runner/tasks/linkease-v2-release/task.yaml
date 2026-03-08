@@ -1,0 +1,15 @@
+include:
+  - '../_includes/base.yaml'
+name: 'linkease-v2-release'
+description: 'Release-mode publish for Linkease v2 (build frontend/server and publish binary)'
+tags: ['release', 'linkease-v2']
+logs:
+  rootDir: '/config/demo-data/vibe-kanban/logs'
+run:
+  cmds:
+    - 'set -euo pipefail; if pgrep -f "[v]ite --port" >/dev/null 2>&1; then echo "Refusing release: Vite dev server is running" >&2; exit 1; fi'
+    - 'corepack pnpm --dir frontend build'
+    - 'cargo build --release --bin server'
+    - 'install -d /config/vibe-kanban/linkease2'
+    - 'install -m 0755 target/release/server /config/vibe-kanban/linkease2/vibe-kanban'
+    - 'ls -lh /config/vibe-kanban/linkease2/vibe-kanban'

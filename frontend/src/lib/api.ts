@@ -602,6 +602,28 @@ export const attemptsApi = {
     return handleApiResponse<RepoWithTargetBranch[]>(response);
   },
 
+  getCloseGuard: async (
+    attemptId: string
+  ): Promise<{ should_prompt: boolean; target_branch: string | null }> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/close-guard`
+    );
+    return handleApiResponse<{
+      should_prompt: boolean;
+      target_branch: string | null;
+    }>(response);
+  },
+
+  switchToTargetBranchBeforeClose: async (attemptId: string): Promise<void> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/switch-to-target-branch`,
+      {
+        method: 'POST',
+      }
+    );
+    return handleApiResponse<void>(response);
+  },
+
   merge: async (
     attemptId: string,
     data: MergeTaskAttemptRequest

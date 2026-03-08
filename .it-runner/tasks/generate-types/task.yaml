@@ -1,0 +1,8 @@
+include:
+  - '../_includes/base.yaml'
+name: 'generate-types'
+description: 'Regenerate shared TypeScript types from Rust'
+tags: ['types', 'codegen']
+run:
+  cmds:
+    - 'pnpm run generate-types'
