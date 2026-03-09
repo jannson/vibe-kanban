@@ -5,7 +5,6 @@ import {
   KanbanCards,
   KanbanHeader,
   KanbanProvider,
-  type DragEndEvent,
 } from '@/components/ui/shadcn-io/kanban';
 import { AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -90,7 +89,7 @@ export function GlobalTasks() {
     return map;
   }, [filteredTasks]);
 
-  const handleDragEnd = useCallback((_event: DragEndEvent) => {}, []);
+  const handleDragEnd = useCallback(() => {}, []);
 
   const error =
     projectsError ??

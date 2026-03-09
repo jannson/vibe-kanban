@@ -692,7 +692,7 @@ export function ProjectTasks() {
     }
 
     navigateToTasks();
-  }, [attempt?.id, navigate, projectId]);
+  }, [attempt?.id, navigate, projectId, t]);
 
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {

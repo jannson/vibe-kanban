@@ -240,6 +240,7 @@ export const useJsonPatchWsStream = <T extends object>(
     initialData,
     injectInitialEntry,
     deduplicatePatches,
+    resetOnConnect,
     retryNonce,
   ]);
 

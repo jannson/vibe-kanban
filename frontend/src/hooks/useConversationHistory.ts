@@ -59,6 +59,21 @@ interface UseConversationHistoryResult {
 
 const MIN_INITIAL_ENTRIES = 10;
 const REMAINING_BATCH_SIZE = 50;
+const INITIAL_HISTORIC_MAX_ENTRIES = 200;
+const INITIAL_HISTORIC_MAX_CODING_AGENT_PROCESSES = 1;
+const INITIAL_HISTORIC_MAX_PATCH_EVENTS = 1500;
+const INITIAL_HISTORIC_MAX_PROCESS_LOAD_MS = 5000;
+
+type LoadHistoricEntriesResult = {
+  entries: PatchType[];
+  truncated: boolean;
+};
+
+type HistoricLoadLimits = {
+  maxEntries?: number;
+  maxPatchEvents?: number;
+  maxDurationMs?: number;
+};
 
 const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
   type: 'NORMALIZED_ENTRY',
@@ -110,6 +125,7 @@ export const useConversationHistory = ({
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
   const loadedInitialEntries = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
+  const truncatedHistoricProcessIdsRef = useRef<Set<string>>(new Set());
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
   const [hasMoreHistoric, setHasMoreHistoric] = useState(false);
   const [isLoadingHistoric, setIsLoadingHistoric] = useState(false);
@@ -120,16 +136,19 @@ export const useConversationHistory = ({
         process.status !== ExecutionProcessStatus.running &&
         !displayedExecutionProcesses.current[process.id]
     );
-    setHasMoreHistoric((prev) => (prev === remaining ? prev : remaining));
+    const hasTruncatedHistoric = truncatedHistoricProcessIdsRef.current.size > 0;
+    const next = remaining || hasTruncatedHistoric;
+    setHasMoreHistoric((prev) => (prev === next ? prev : next));
   }, []);
 
-  const mergeIntoDisplayed = (
-    mutator: (state: ExecutionProcessStateStore) => void
-  ) => {
-    const state = displayedExecutionProcesses.current;
-    mutator(state);
-    updateHasMoreHistoric();
-  };
+  const mergeIntoDisplayed = useCallback(
+    (mutator: (state: ExecutionProcessStateStore) => void) => {
+      const state = displayedExecutionProcesses.current;
+      mutator(state);
+      updateHasMoreHistoric();
+    },
+    [updateHasMoreHistoric]
+  );
   useEffect(() => {
     onEntriesUpdatedRef.current = onEntriesUpdated;
   }, [onEntriesUpdated]);
@@ -148,9 +167,8 @@ export const useConversationHistory = ({
     updateHasMoreHistoric();
   }, [executionProcessesRaw, updateHasMoreHistoric]);
 
-  const loadEntriesForHistoricExecutionProcess = (
-    executionProcess: ExecutionProcess
-  ) => {
+  const loadEntriesForHistoricExecutionProcess = useCallback(
+    (executionProcess: ExecutionProcess, limits?: HistoricLoadLimits) => {
     let url = '';
     if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
       url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
@@ -158,23 +176,79 @@ export const useConversationHistory = ({
       url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;
     }
 
-    return new Promise<PatchType[]>((resolve) => {
-      const controller = streamJsonPatchEntries<PatchType>(url, {
+      return new Promise<LoadHistoricEntriesResult>((resolve) => {
+      let settled = false;
+      let truncated = false;
+      let patchEvents = 0;
+      let controller: {
+        close: () => void;
+        getEntries: () => PatchType[];
+      } | null = null;
+      let timeoutId: number | null = null;
+
+      const settle = (entries: PatchType[]) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+        resolve({ entries, truncated });
+      };
+
+      if (limits?.maxDurationMs !== undefined && limits.maxDurationMs > 0) {
+        timeoutId = window.setTimeout(() => {
+          truncated = true;
+          if (controller) {
+            const snapshot = controller.getEntries();
+            controller.close();
+            settle(snapshot);
+          } else {
+            settle([]);
+          }
+        }, limits.maxDurationMs);
+      }
+
+      controller = streamJsonPatchEntries<PatchType>(url, {
+        onEntries: (entries) => {
+          patchEvents += 1;
+          if (
+            limits?.maxPatchEvents !== undefined &&
+            limits.maxPatchEvents > 0 &&
+            patchEvents >= limits.maxPatchEvents
+          ) {
+            truncated = true;
+            controller?.close();
+            settle(entries);
+            return;
+          }
+
+          if (
+            limits?.maxEntries !== undefined &&
+            limits.maxEntries > 0 &&
+            entries.length >= limits.maxEntries
+          ) {
+            truncated = true;
+            controller?.close();
+            settle(entries.slice(0, limits.maxEntries));
+          }
+        },
         onFinished: (allEntries) => {
-          controller.close();
-          resolve(allEntries);
+          controller?.close();
+          settle(allEntries);
         },
         onError: (err) => {
           console.warn!(
             `Error loading entries for historic execution process ${executionProcess.id}`,
             err
           );
-          controller.close();
-          resolve([]);
+          controller?.close();
+          settle([]);
         },
       });
-    });
-  };
+      });
+    },
+    []
+  );
 
   const getLiveExecutionProcess = (
     executionProcessId: string
@@ -488,7 +562,7 @@ export const useConversationHistory = ({
         });
       });
     },
-    [emitEntries]
+    [emitEntries, mergeIntoDisplayed]
   );
 
   // Sometimes it can take a few seconds for the stream to start, wrap the loadRunningAndEmit method
@@ -511,15 +585,34 @@ export const useConversationHistory = ({
       const localDisplayedExecutionProcesses: ExecutionProcessStateStore = {};
 
       if (!executionProcesses?.current) return localDisplayedExecutionProcesses;
+      let loadedCodingAgentProcesses = 0;
+      let loadedEntries = 0;
 
       for (const executionProcess of [
         ...executionProcesses.current,
       ].reverse()) {
         if (executionProcess.status === ExecutionProcessStatus.running)
           continue;
+        const isCodingAgentProcess =
+          executionProcess.executor_action.typ.type ===
+            'CodingAgentInitialRequest' ||
+          executionProcess.executor_action.typ.type ===
+            'CodingAgentFollowUpRequest';
+        if (!isCodingAgentProcess) continue;
 
-        const entries =
-          await loadEntriesForHistoricExecutionProcess(executionProcess);
+        const remainingEntryBudget = Math.max(
+          1,
+          INITIAL_HISTORIC_MAX_ENTRIES - loadedEntries
+        );
+
+        const { entries, truncated } = await loadEntriesForHistoricExecutionProcess(
+          executionProcess,
+          {
+            maxEntries: remainingEntryBudget,
+            maxPatchEvents: INITIAL_HISTORIC_MAX_PATCH_EVENTS,
+            maxDurationMs: INITIAL_HISTORIC_MAX_PROCESS_LOAD_MS,
+          }
+        );
         const entriesWithKey = entries.map((e, idx) =>
           patchWithKey(e, executionProcess.id, idx)
         );
@@ -528,17 +621,28 @@ export const useConversationHistory = ({
           executionProcess,
           entries: entriesWithKey,
         };
+        loadedCodingAgentProcesses += 1;
+        loadedEntries += entriesWithKey.length;
+
+        if (truncated) {
+          truncatedHistoricProcessIdsRef.current.add(executionProcess.id);
+        } else {
+          truncatedHistoricProcessIdsRef.current.delete(executionProcess.id);
+        }
 
         if (
+          loadedCodingAgentProcesses >=
+            INITIAL_HISTORIC_MAX_CODING_AGENT_PROCESSES ||
+          loadedEntries >= INITIAL_HISTORIC_MAX_ENTRIES ||
           flattenEntries(localDisplayedExecutionProcesses).length >
-          MIN_INITIAL_ENTRIES
+            MIN_INITIAL_ENTRIES
         ) {
           break;
         }
       }
 
       return localDisplayedExecutionProcesses;
-    }, [executionProcesses]);
+    }, [executionProcesses, loadEntriesForHistoricExecutionProcess]);
 
   const loadRemainingEntriesInBatches = useCallback(
     async (batchSize: number): Promise<boolean> => {
@@ -549,13 +653,15 @@ export const useConversationHistory = ({
         ...executionProcesses.current,
       ].reverse()) {
         const current = displayedExecutionProcesses.current;
+        const shouldReloadTruncated =
+          truncatedHistoricProcessIdsRef.current.has(executionProcess.id);
         if (
-          current[executionProcess.id] ||
+          (current[executionProcess.id] && !shouldReloadTruncated) ||
           executionProcess.status === ExecutionProcessStatus.running
         )
           continue;
 
-        const entries =
+        const { entries } =
           await loadEntriesForHistoricExecutionProcess(executionProcess);
         const entriesWithKey = entries.map((e, idx) =>
           patchWithKey(e, executionProcess.id, idx)
@@ -567,6 +673,7 @@ export const useConversationHistory = ({
             entries: entriesWithKey,
           };
         });
+        truncatedHistoricProcessIdsRef.current.delete(executionProcess.id);
 
         if (
           flattenEntries(displayedExecutionProcesses.current).length > batchSize
@@ -578,24 +685,27 @@ export const useConversationHistory = ({
       }
       return anyUpdated;
     },
-    [executionProcesses]
+    [executionProcesses, loadEntriesForHistoricExecutionProcess, mergeIntoDisplayed]
   );
 
-  const ensureProcessVisible = useCallback((p: ExecutionProcess) => {
-    mergeIntoDisplayed((state) => {
-      if (!state[p.id]) {
-        state[p.id] = {
-          executionProcess: {
-            id: p.id,
-            created_at: p.created_at,
-            updated_at: p.updated_at,
-            executor_action: p.executor_action,
-          },
-          entries: [],
-        };
-      }
-    });
-  }, []);
+  const ensureProcessVisible = useCallback(
+    (p: ExecutionProcess) => {
+      mergeIntoDisplayed((state) => {
+        if (!state[p.id]) {
+          state[p.id] = {
+            executionProcess: {
+              id: p.id,
+              created_at: p.created_at,
+              updated_at: p.updated_at,
+              executor_action: p.executor_action,
+            },
+            entries: [],
+          };
+        }
+      });
+    },
+    [mergeIntoDisplayed]
+  );
 
   const idListKey = useMemo(
     () => executionProcessesRaw?.map((p) => p.id).join(','),
@@ -638,6 +748,8 @@ export const useConversationHistory = ({
     loadInitialEntries,
     loadRemainingEntriesInBatches,
     emitEntries,
+    mergeIntoDisplayed,
+    updateHasMoreHistoric,
   ]); // include idListKey so new processes trigger reload
 
   useEffect(() => {
@@ -692,13 +804,20 @@ export const useConversationHistory = ({
       });
       updateHasMoreHistoric();
     }
-  }, [attempt.id, idListKey, executionProcessesRaw]);
+  }, [
+    attempt.id,
+    idListKey,
+    executionProcessesRaw,
+    mergeIntoDisplayed,
+    updateHasMoreHistoric,
+  ]);
 
   // Reset state when attempt changes
   useEffect(() => {
     displayedExecutionProcesses.current = {};
     loadedInitialEntries.current = false;
     streamingProcessIdsRef.current.clear();
+    truncatedHistoricProcessIdsRef.current.clear();
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
     setHasMoreHistoric(false);
     setIsLoadingHistoric(false);
