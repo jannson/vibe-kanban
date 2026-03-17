@@ -688,6 +688,40 @@ export const useConversationHistory = ({
     [executionProcesses, loadEntriesForHistoricExecutionProcess, mergeIntoDisplayed]
   );
 
+  const backfillLatestTruncatedProcess = useCallback(async (): Promise<boolean> => {
+    const latestTruncated = [...executionProcesses.current]
+      .reverse()
+      .find((process) => {
+        const isCodingAgentProcess =
+          process.executor_action.typ.type ===
+            'CodingAgentInitialRequest' ||
+          process.executor_action.typ.type ===
+            'CodingAgentFollowUpRequest';
+        return (
+          isCodingAgentProcess &&
+          process.status !== ExecutionProcessStatus.running &&
+          truncatedHistoricProcessIdsRef.current.has(process.id)
+        );
+      });
+
+    if (!latestTruncated) return false;
+
+    const { entries } =
+      await loadEntriesForHistoricExecutionProcess(latestTruncated);
+    const entriesWithKey = entries.map((e, idx) =>
+      patchWithKey(e, latestTruncated.id, idx)
+    );
+
+    mergeIntoDisplayed((state) => {
+      state[latestTruncated.id] = {
+        executionProcess: latestTruncated,
+        entries: entriesWithKey,
+      };
+    });
+    truncatedHistoricProcessIdsRef.current.delete(latestTruncated.id);
+    return true;
+  }, [executionProcesses, loadEntriesForHistoricExecutionProcess, mergeIntoDisplayed]);
+
   const ensureProcessVisible = useCallback(
     (p: ExecutionProcess) => {
       mergeIntoDisplayed((state) => {
@@ -738,6 +772,14 @@ export const useConversationHistory = ({
       loadedInitialEntries.current = true;
 
       updateHasMoreHistoric();
+
+      if (truncatedHistoricProcessIdsRef.current.size > 0) {
+        void backfillLatestTruncatedProcess().then((updated) => {
+          if (!updated || cancelled) return;
+          emitEntries(displayedExecutionProcesses.current, 'historic', false);
+          updateHasMoreHistoric();
+        });
+      }
     })();
     return () => {
       cancelled = true;
@@ -747,6 +789,7 @@ export const useConversationHistory = ({
     idListKey,
     loadInitialEntries,
     loadRemainingEntriesInBatches,
+    backfillLatestTruncatedProcess,
     emitEntries,
     mergeIntoDisplayed,
     updateHasMoreHistoric,

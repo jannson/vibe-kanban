@@ -128,3 +128,30 @@ This keeps history page responsive while preserving compatibility for entries th
 - Environment flag:
   - `VIBE_KANBAN_HISTORY_SKIP_ENSURE_CONTAINER=0` can restore old behavior (call `ensure_container_exists` in history fallback path)
   - unset (default) uses fast-path (skip ensure)
+
+## Frontend History First-Screen Cap and Latest-Result Backfill (2026-03-09)
+
+**Background**
+- Some attempts contain very large single-process history logs.
+- Even with backend fast-path, first-screen loading can still be slow if frontend waits too long for one process stream.
+
+**Implemented Behavior**
+1. First-screen hard cap in `useConversationHistory`:
+- Load only the latest `1` coding-agent process initially.
+- Limit to `200` entries for first-screen history.
+- Add two additional truncation guards for first-screen stream:
+  - max patch events: `1500`
+  - max per-process load time: `5000ms`
+
+2. Keep "Load earlier runs" for full history:
+- Remaining history is still accessible through manual "load earlier runs".
+- Truncated processes are tracked and can be fully loaded later.
+
+3. Protect final answer visibility:
+- If the latest coding-agent process was truncated in first-screen load, frontend now auto-backfills that latest truncated process in background.
+- This keeps first paint fast while ensuring the final assistant response appears without requiring manual "load earlier runs".
+
+**Trade-offs**
+- One extra background history fetch may occur for large latest process.
+- UI can update twice (quick initial render, then completed latest process).
+- This is intentional to prioritize both responsiveness and final-result completeness.
