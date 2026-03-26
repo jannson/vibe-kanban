@@ -181,12 +181,13 @@ impl GitService {
                             "git config user.name failed: {e}"
                         ))
                     })?;
-                git.git(repo_path, ["config", "user.email", "noreply@vibekanban.com"])
-                    .map_err(|e| {
-                        GitServiceError::InvalidRepository(format!(
-                            "git config user.email failed: {e}"
-                        ))
-                    })?;
+                git.git(
+                    repo_path,
+                    ["config", "user.email", "noreply@vibekanban.com"],
+                )
+                .map_err(|e| {
+                    GitServiceError::InvalidRepository(format!("git config user.email failed: {e}"))
+                })?;
             }
         }
         Ok(())

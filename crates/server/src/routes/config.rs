@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     http,
     response::{Json as ResponseJson, Response},
-    routing::{get, put},
+    routing::{get, post, put},
 };
 use deployment::{Deployment, DeploymentError};
 use executors::{
@@ -18,10 +18,13 @@ use executors::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use services::services::config::{
-    Config, ConfigError, SoundFile,
-    editor::{EditorConfig, EditorType},
-    save_config_to_file,
+use services::services::{
+    config::{
+        Config, ConfigError, RemoteNotificationsConfig, RemoteNotifierTarget, SoundFile,
+        editor::{EditorConfig, EditorType},
+        save_config_to_file,
+    },
+    container::ContainerService,
 };
 use tokio::fs;
 use ts_rs::TS;
@@ -33,6 +36,7 @@ pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/info", get(get_user_system_info))
         .route("/config", put(update_config))
+        .route("/config/remote-notifiers/test", post(test_remote_notifier_target))
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
         .route("/profiles", get(get_profiles).put(update_profiles))
@@ -138,6 +142,54 @@ async fn update_config(
             ResponseJson(ApiResponse::success(new_config))
         }
         Err(e) => ResponseJson(ApiResponse::error(&format!("Failed to save config: {}", e))),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, TS, Clone)]
+pub struct TestRemoteNotifierTargetRequest {
+    pub target: RemoteNotifierTarget,
+    pub default_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct TestRemoteNotifierTargetResponse {
+    pub message: String,
+}
+
+async fn test_remote_notifier_target(
+    State(deployment): State<DeploymentImpl>,
+    Json(payload): Json<TestRemoteNotifierTargetRequest>,
+) -> ResponseJson<ApiResponse<TestRemoteNotifierTargetResponse>> {
+    let mut config = deployment.config().read().await.clone();
+    let default_timeout_ms = payload
+        .default_timeout_ms
+        .unwrap_or(config.remote_notifications.default_timeout_ms);
+
+    config.remote_notifications = RemoteNotificationsConfig {
+        enabled: true,
+        targets: vec![payload.target.clone()],
+        default_timeout_ms,
+    };
+
+    if let Err(err) = config.validate() {
+        return ResponseJson(ApiResponse::error(&format!(
+            "Invalid remote notifier target: {err}"
+        )));
+    }
+
+    let target_id = payload.target.id.clone();
+    match deployment
+        .container()
+        .notification_service()
+        .test_remote_target(&payload.target, default_timeout_ms)
+        .await
+    {
+        Ok(()) => ResponseJson(ApiResponse::success(TestRemoteNotifierTargetResponse {
+            message: format!("Test notification sent to target '{target_id}'"),
+        })),
+        Err(err) => ResponseJson(ApiResponse::error(&format!(
+            "Failed to test remote notifier target '{target_id}': {err}"
+        ))),
     }
 }
 

@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Error as AnyhowError, anyhow};
 use async_trait::async_trait;
+use chrono::Utc;
 use db::{
     DBService,
     models::{
@@ -50,7 +51,7 @@ use uuid::Uuid;
 
 use crate::services::{
     git::{GitService, GitServiceError},
-    notification::NotificationService,
+    notification::{NotificationService, ReviewReadyNotificationEvent},
     share::SharePublisher,
     workspace_manager::WorkspaceError as WorkspaceManagerError,
     worktree_manager::WorktreeError,
@@ -232,7 +233,23 @@ pub trait ContainerService {
                 return;
             }
         };
-        self.notification_service().notify(&title, &message).await;
+        let event = ReviewReadyNotificationEvent {
+            task_id: ctx.task.id.to_string(),
+            task_title: ctx.task.title.clone(),
+            project_id: ctx.task.project_id.to_string(),
+            project_name: None,
+            workspace_id: ctx.workspace.id.to_string(),
+            session_id: ctx.session.id.to_string(),
+            status: "inreview".to_string(),
+            branch: Some(ctx.workspace.branch.clone()),
+            executor: ctx.session.executor.clone(),
+            completed_at: Utc::now(),
+            local_title: title,
+            local_message: message,
+        };
+        self.notification_service()
+            .notify_review_ready(&event)
+            .await;
     }
 
     /// Cleanup executions marked as running in the db, call at startup

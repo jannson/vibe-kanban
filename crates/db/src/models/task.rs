@@ -259,7 +259,7 @@ ORDER BY t.created_at DESC"#,
     )                               AS "executor"
 
 FROM tasks t
-ORDER BY t.created_at DESC"#
+ORDER BY t.created_at DESC"#,
         )
         .fetch_all(pool)
         .await?;
@@ -272,13 +272,11 @@ ORDER BY t.created_at DESC"#
                 let title: String = rec.try_get("title")?;
                 let description: Option<String> = rec.try_get("description")?;
                 let status: TaskStatus = rec.try_get("status")?;
-                let parent_workspace_id: Option<Uuid> =
-                    rec.try_get("parent_workspace_id")?;
+                let parent_workspace_id: Option<Uuid> = rec.try_get("parent_workspace_id")?;
                 let shared_task_id: Option<Uuid> = rec.try_get("shared_task_id")?;
                 let created_at: DateTime<Utc> = rec.try_get("created_at")?;
                 let updated_at: DateTime<Utc> = rec.try_get("updated_at")?;
-                let has_in_progress_attempt: i64 =
-                    rec.try_get("has_in_progress_attempt")?;
+                let has_in_progress_attempt: i64 = rec.try_get("has_in_progress_attempt")?;
                 let last_attempt_failed: i64 = rec.try_get("last_attempt_failed")?;
                 let executor: String = rec.try_get("executor")?;
 

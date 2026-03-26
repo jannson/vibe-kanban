@@ -117,10 +117,9 @@ impl GitCli {
         self.ensure_available()?;
         match self.git(repo_path, ["checkout", branch]) {
             Ok(_) => Ok(()),
-            Err(GitCliError::CommandFailed(_)) => {
-                self.git(repo_path, ["checkout", "-b", branch, base_branch])
-                    .map(|_| ())
-            }
+            Err(GitCliError::CommandFailed(_)) => self
+                .git(repo_path, ["checkout", "-b", branch, base_branch])
+                .map(|_| ()),
             Err(e) => Err(e),
         }
     }

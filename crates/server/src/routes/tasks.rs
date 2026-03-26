@@ -25,9 +25,7 @@ use executors::profile::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use services::services::{
-    container::ContainerService,
-    share::ShareError,
-    workspace_manager::WorkspaceManager,
+    container::ContainerService, share::ShareError, workspace_manager::WorkspaceManager,
 };
 use sqlx::Error as SqlxError;
 use ts_rs::TS;
@@ -91,9 +89,7 @@ async fn ensure_original_repo_available(
             let head = deployment
                 .git()
                 .get_head_info(std::path::Path::new(&repo.path))
-                .map_err(|_| {
-                    ApiError::BadRequest("Unable to read repository HEAD".to_string())
-                })?;
+                .map_err(|_| ApiError::BadRequest("Unable to read repository HEAD".to_string()))?;
             let reserved_prefix = format!("{}/", branch_prefix);
             if head.branch.starts_with(&reserved_prefix) {
                 let (uncommitted_count, untracked_count) =
@@ -190,10 +186,7 @@ async fn handle_tasks_ws(
     Ok(())
 }
 
-async fn handle_all_tasks_ws(
-    socket: WebSocket,
-    deployment: DeploymentImpl,
-) -> anyhow::Result<()> {
+async fn handle_all_tasks_ws(socket: WebSocket, deployment: DeploymentImpl) -> anyhow::Result<()> {
     let mut stream = deployment
         .events()
         .stream_all_tasks_raw()
@@ -469,8 +462,7 @@ pub async fn delete_task(
             && let Some(container_ref) = attempt.container_ref.as_deref()
         {
             let inferred = infer_use_original_repos(container_ref);
-            if let Err(err) =
-                Workspace::update_use_original_repos(pool, attempt.id, inferred).await
+            if let Err(err) = Workspace::update_use_original_repos(pool, attempt.id, inferred).await
             {
                 tracing::warn!(
                     "Failed to backfill use_original_repos for workspace {}: {}",

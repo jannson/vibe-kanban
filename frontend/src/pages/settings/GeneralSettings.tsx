@@ -20,10 +20,13 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Volume2 } from 'lucide-react';
+import { Loader2, Plus, Trash2, Volume2 } from 'lucide-react';
 import {
   DEFAULT_PR_DESCRIPTION_PROMPT,
+  type RemoteNotifierProjectFilter,
+  type RemoteNotifierTarget,
   EditorType,
+  type ReviewReadyNotificationStrategy,
   SoundFile,
   ThemeMode,
   UiLanguage,
@@ -36,6 +39,7 @@ import { EditorAvailabilityIndicator } from '@/components/EditorAvailabilityIndi
 import { useTheme } from '@/components/ThemeProvider';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { TagManager } from '@/components/TagManager';
+import { configApi } from '@/lib/api';
 
 export function GeneralSettings() {
   const { t } = useTranslation(['settings', 'common']);
@@ -59,6 +63,12 @@ export function GeneralSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [testingRemoteTargetIndex, setTestingRemoteTargetIndex] = useState<
+    number | null
+  >(null);
+  const [remoteTargetTestResults, setRemoteTargetTestResults] = useState<
+    Record<number, { type: 'success' | 'error'; message: string }>
+  >({});
   const [branchPrefixError, setBranchPrefixError] = useState<string | null>(
     null
   );
@@ -179,6 +189,152 @@ export function GeneralSettings() {
     updateAndSaveConfig({ onboarding_acknowledged: false });
   };
 
+  const parseTimeoutValue = (value: string): bigint | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isNaN(parsed)) return null;
+    return parsed as unknown as bigint;
+  };
+
+  const formatTimeoutValue = (value: bigint | null | undefined): string => {
+    if (value == null) return '';
+    return String(value);
+  };
+
+  const updateRemoteNotifications = useCallback(
+    (patch: Partial<NonNullable<typeof config>['remote_notifications']>) => {
+      if (!draft) return;
+      updateDraft({
+        remote_notifications: {
+          ...draft.remote_notifications,
+          ...patch,
+        },
+      });
+    },
+    [draft, updateDraft]
+  );
+
+  const updateRemoteTarget = useCallback(
+    (index: number, patch: Partial<RemoteNotifierTarget>) => {
+      if (!draft) return;
+      const nextTargets = draft.remote_notifications.targets.map((target, i) =>
+        i === index ? { ...target, ...patch } : target
+      );
+      updateRemoteNotifications({ targets: nextTargets });
+    },
+    [draft, updateRemoteNotifications]
+  );
+
+  const createRemoteTargetId = (): string => {
+    if (
+      typeof globalThis.crypto !== 'undefined' &&
+      typeof globalThis.crypto.randomUUID === 'function'
+    ) {
+      return globalThis.crypto.randomUUID();
+    }
+
+    return `remote-target-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+  };
+
+  const addRemoteTarget = useCallback(() => {
+    if (!draft) return;
+    const newTarget: RemoteNotifierTarget = {
+      id: createRemoteTargetId(),
+      enabled: true,
+      label: null,
+      url: '',
+      token: null,
+      projects: { type: 'all' },
+      title_regex: null,
+      timeout_ms: null,
+      sound_enabled: true,
+      desktop_enabled: false,
+    };
+
+    updateRemoteNotifications({
+      targets: [...draft.remote_notifications.targets, newTarget],
+    });
+  }, [draft, updateRemoteNotifications]);
+
+  const removeRemoteTarget = useCallback(
+    (index: number) => {
+      if (!draft) return;
+      updateRemoteNotifications({
+        targets: draft.remote_notifications.targets.filter((_, i) => i !== index),
+      });
+    },
+    [draft, updateRemoteNotifications]
+  );
+
+  const formatProjectsValue = (projects: RemoteNotifierProjectFilter): string => {
+    if (projects.type === 'all') return '';
+    return projects.value.join(', ');
+  };
+
+  const parseProjectsValue = (value: string): RemoteNotifierProjectFilter => {
+    const projectIds = value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (projectIds.length === 0) {
+      return { type: 'all' };
+    }
+    return { type: 'project_ids', value: projectIds };
+  };
+
+  const testRemoteTarget = useCallback(
+    async (index: number) => {
+      if (!draft) return;
+
+      const target = draft.remote_notifications.targets[index];
+      if (!target) return;
+
+      setTestingRemoteTargetIndex(index);
+      setRemoteTargetTestResults((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+
+      try {
+        const response = await configApi.testRemoteNotifierTarget({
+          target,
+          default_timeout_ms:
+            draft.remote_notifications.default_timeout_ms ?? null,
+        });
+
+        setRemoteTargetTestResults((prev) => ({
+          ...prev,
+          [index]: {
+            type: 'success',
+            message: response.message,
+          },
+        }));
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : t('settings.general.remoteNotifications.targets.test.error', {
+                defaultValue: 'Failed to test remote notifier target.',
+              });
+
+        setRemoteTargetTestResults((prev) => ({
+          ...prev,
+          [index]: {
+            type: 'error',
+            message,
+          },
+        }));
+      } finally {
+        setTestingRemoteTargetIndex(null);
+      }
+    },
+    [draft, t]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -197,6 +353,8 @@ export function GeneralSettings() {
       </div>
     );
   }
+
+  const remoteNotifications = draft?.remote_notifications ?? config.remote_notifications;
 
   return (
     <div className="space-y-6">
@@ -667,6 +825,434 @@ export function GeneralSettings() {
                 {t('settings.general.notifications.push.helper')}
               </p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {t('settings.general.remoteNotifications.title', {
+              defaultValue: 'Remote Notifiers',
+            })}
+          </CardTitle>
+          <CardDescription>
+            {t('settings.general.remoteNotifications.description', {
+              defaultValue:
+                'Route task completion notifications to local notifier endpoints such as SSH reverse-tunneled computers.',
+            })}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="remote-notifications-enabled"
+              checked={draft?.remote_notifications.enabled ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateRemoteNotifications({ enabled: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label
+                htmlFor="remote-notifications-enabled"
+                className="cursor-pointer"
+              >
+                {t('settings.general.remoteNotifications.enabled.label', {
+                  defaultValue: 'Enable Remote Notifiers',
+                })}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.remoteNotifications.enabled.helper', {
+                  defaultValue:
+                    'Send review-ready events to configured local notifier endpoints.',
+                })}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="remote-default-timeout">
+              {t('settings.general.remoteNotifications.defaultTimeout.label', {
+                defaultValue: 'Default Timeout (ms)',
+              })}
+            </Label>
+            <Input
+              id="remote-default-timeout"
+              type="number"
+              min="1"
+              max="60000"
+              value={formatTimeoutValue(
+                draft?.remote_notifications.default_timeout_ms
+              )}
+              onChange={(e) =>
+                updateRemoteNotifications({
+                  default_timeout_ms:
+                    (parseTimeoutValue(e.target.value) ??
+                      (1500 as unknown as bigint)) as unknown as bigint,
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.remoteNotifications.defaultTimeout.helper', {
+                defaultValue:
+                  'Fallback request timeout used when a target-specific timeout is not set.',
+              })}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="review-ready-notification-strategy">
+              {t('settings.general.remoteNotifications.strategy.label', {
+                defaultValue: 'Review-Ready Notification Strategy',
+              })}
+            </Label>
+            <Select
+              value={
+                draft?.review_ready_notification_strategy ?? 'LOCAL_ONLY'
+              }
+              onValueChange={(value: ReviewReadyNotificationStrategy) =>
+                updateDraft({
+                  review_ready_notification_strategy: value,
+                })
+              }
+            >
+              <SelectTrigger id="review-ready-notification-strategy">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="LOCAL_ONLY">
+                  {t('settings.general.remoteNotifications.strategy.localOnly', {
+                    defaultValue: 'Local Only',
+                  })}
+                </SelectItem>
+                <SelectItem value="REMOTE_ONLY">
+                  {t('settings.general.remoteNotifications.strategy.remoteOnly', {
+                    defaultValue: 'Remote Only',
+                  })}
+                </SelectItem>
+                <SelectItem value="BOTH">
+                  {t('settings.general.remoteNotifications.strategy.both', {
+                    defaultValue: 'Both',
+                  })}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.remoteNotifications.strategy.helper', {
+                defaultValue:
+                  'Choose whether review-ready events notify on the server host, the local notifier, or both.',
+              })}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">
+                {t('settings.general.remoteNotifications.targets.title', {
+                  defaultValue: 'Targets',
+                })}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.remoteNotifications.targets.helper', {
+                  defaultValue:
+                    'Each target can filter by project IDs and task title regex.',
+                })}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={addRemoteTarget}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t('settings.general.remoteNotifications.targets.add', {
+                defaultValue: 'Add Target',
+              })}
+            </Button>
+          </div>
+
+          <div className="space-y-4">
+            {remoteNotifications.targets.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.remoteNotifications.targets.empty', {
+                  defaultValue: 'No remote notifier targets configured.',
+                })}
+              </p>
+            ) : (
+              remoteNotifications.targets.map((target, index) => (
+                <div
+                  key={target.id || index}
+                  className="rounded-lg border p-4 space-y-4"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`remote-target-enabled-${index}`}
+                        checked={target.enabled}
+                        onCheckedChange={(checked: boolean) =>
+                          updateRemoteTarget(index, { enabled: checked })
+                        }
+                      />
+                      <div className="space-y-0.5">
+                        <Label
+                          htmlFor={`remote-target-enabled-${index}`}
+                          className="cursor-pointer"
+                        >
+                          {target.label ||
+                            target.id ||
+                            t(
+                              'settings.general.remoteNotifications.targets.unnamed',
+                              {
+                                defaultValue: 'Unnamed target',
+                              }
+                            )}
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t('settings.general.remoteNotifications.targets.id', {
+                            defaultValue: 'ID',
+                          })}
+                          : {target.id}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => testRemoteTarget(index)}
+                        disabled={testingRemoteTargetIndex === index}
+                      >
+                        {testingRemoteTargetIndex === index && (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        )}
+                        {t('settings.general.remoteNotifications.targets.test.label', {
+                          defaultValue: 'Test',
+                        })}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeRemoteTarget(index)}
+                        aria-label={t(
+                          'settings.general.remoteNotifications.targets.remove',
+                          {
+                            defaultValue: 'Remove target',
+                          }
+                        )}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {remoteTargetTestResults[index] && (
+                    <Alert
+                      variant={
+                        remoteTargetTestResults[index].type === 'success'
+                          ? 'success'
+                          : 'destructive'
+                      }
+                    >
+                      <AlertDescription>
+                        {remoteTargetTestResults[index].message}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>{t('settings.general.remoteNotifications.fields.id', {
+                        defaultValue: 'Target ID',
+                      })}</Label>
+                      <Input
+                        value={target.id}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, { id: e.target.value })
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{t('settings.general.remoteNotifications.fields.label', {
+                        defaultValue: 'Label',
+                      })}</Label>
+                      <Input
+                        value={target.label ?? ''}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, {
+                            label: e.target.value || null,
+                          })
+                        }
+                        placeholder={t(
+                          'settings.general.remoteNotifications.fields.labelPlaceholder',
+                          {
+                            defaultValue: 'e.g. Janson MacBook',
+                          }
+                        )}
+                      />
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>{t('settings.general.remoteNotifications.fields.url', {
+                        defaultValue: 'URL',
+                      })}</Label>
+                      <Input
+                        value={target.url}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, { url: e.target.value })
+                        }
+                        placeholder="http://127.0.0.1:43110/notify"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{t('settings.general.remoteNotifications.fields.token', {
+                        defaultValue: 'Token',
+                      })}</Label>
+                      <Input
+                        value={target.token ?? ''}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, {
+                            token: e.target.value || null,
+                          })
+                        }
+                        placeholder={t(
+                          'settings.general.remoteNotifications.fields.tokenPlaceholder',
+                          {
+                            defaultValue: 'Bearer token for notifier auth',
+                          }
+                        )}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>
+                        {t('settings.general.remoteNotifications.fields.timeout', {
+                          defaultValue: 'Timeout (ms)',
+                        })}
+                      </Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="60000"
+                        value={formatTimeoutValue(target.timeout_ms)}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, {
+                            timeout_ms: parseTimeoutValue(
+                              e.target.value
+                            ) as unknown as bigint | null,
+                          })
+                        }
+                        placeholder={formatTimeoutValue(
+                          remoteNotifications.default_timeout_ms
+                        )}
+                      />
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>
+                        {t(
+                          'settings.general.remoteNotifications.fields.projects',
+                          {
+                            defaultValue: 'Project IDs',
+                          }
+                        )}
+                      </Label>
+                      <Input
+                        value={formatProjectsValue(target.projects)}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, {
+                            projects: parseProjectsValue(e.target.value),
+                          })
+                        }
+                        placeholder={t(
+                          'settings.general.remoteNotifications.fields.projectsPlaceholder',
+                          {
+                            defaultValue:
+                              'Leave empty for ALL, or enter comma-separated project IDs',
+                          }
+                        )}
+                      />
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>
+                        {t(
+                          'settings.general.remoteNotifications.fields.titleRegex',
+                          {
+                            defaultValue: 'Task Title Regex',
+                          }
+                        )}
+                      </Label>
+                      <Input
+                        value={target.title_regex ?? ''}
+                        onChange={(e) =>
+                          updateRemoteTarget(index, {
+                            title_regex: e.target.value || null,
+                          })
+                        }
+                        placeholder={t(
+                          'settings.general.remoteNotifications.fields.titleRegexPlaceholder',
+                          {
+                            defaultValue:
+                              'Optional regex, e.g. ^(urgent|prod):',
+                          }
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`remote-target-sound-${index}`}
+                        checked={target.sound_enabled}
+                        onCheckedChange={(checked: boolean) =>
+                          updateRemoteTarget(index, { sound_enabled: checked })
+                        }
+                      />
+                      <Label
+                        htmlFor={`remote-target-sound-${index}`}
+                        className="cursor-pointer"
+                      >
+                        {t('settings.general.remoteNotifications.fields.sound', {
+                          defaultValue: 'Sound',
+                        })}
+                      </Label>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`remote-target-desktop-${index}`}
+                        checked={target.desktop_enabled}
+                        onCheckedChange={(checked: boolean) =>
+                          updateRemoteTarget(index, {
+                            desktop_enabled: checked,
+                          })
+                        }
+                      />
+                      <Label
+                        htmlFor={`remote-target-desktop-${index}`}
+                        className="cursor-pointer"
+                      >
+                        {t(
+                          'settings.general.remoteNotifications.fields.desktop',
+                          {
+                            defaultValue: 'Desktop Notification',
+                          }
+                        )}
+                      </Label>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      'settings.general.remoteNotifications.fields.desktopHelper',
+                      {
+                        defaultValue:
+                          'Requires the local vk-notifier process to be started with --desktop-enabled.',
+                      }
+                    )}
+                  </p>
+                </div>
+              ))
+            )}
           </div>
         </CardContent>
       </Card>

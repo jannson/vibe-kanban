@@ -85,10 +85,7 @@ impl ProjectService {
         repo_service: &RepoService,
         payload: CreateProject,
     ) -> Result<Project> {
-        let workspace_root = payload
-            .workspace_root
-            .as_ref()
-            .map(PathBuf::from);
+        let workspace_root = payload.workspace_root.as_ref().map(PathBuf::from);
         if let Some(ref root) = workspace_root {
             Self::validate_workspace_root(root)?;
         }
@@ -122,7 +119,9 @@ impl ProjectService {
         }
 
         for repo in &normalized_repos {
-            if let Some(existing_repo) = Repo::find_by_path(pool, Path::new(&repo.git_repo_path)).await? {
+            if let Some(existing_repo) =
+                Repo::find_by_path(pool, Path::new(&repo.git_repo_path)).await?
+            {
                 let existing_links = ProjectRepo::find_by_repo_id(pool, existing_repo.id).await?;
                 if !existing_links.is_empty() {
                     return Err(ProjectServiceError::RepositoryAlreadyLinked);
@@ -239,7 +238,10 @@ impl ProjectService {
 
         if let Some(existing_repo) = Repo::find_by_path(pool, &path).await? {
             let existing_links = ProjectRepo::find_by_repo_id(pool, existing_repo.id).await?;
-            if existing_links.iter().any(|link| link.project_id != project_id) {
+            if existing_links
+                .iter()
+                .any(|link| link.project_id != project_id)
+            {
                 return Err(ProjectServiceError::RepositoryAlreadyLinked);
             }
         }
@@ -537,11 +539,9 @@ impl ProjectService {
         Ok(())
     }
 
-    fn validate_repo_under_root(
-        repo_path: &Path,
-        workspace_root: &Path,
-    ) -> Result<()> {
-        let root = std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+    fn validate_repo_under_root(repo_path: &Path, workspace_root: &Path) -> Result<()> {
+        let root =
+            std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
         let repo = std::fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
 
         let is_root_repo = repo == root;

@@ -42,8 +42,7 @@ impl EventService {
     ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
     {
         // Get initial snapshot of tasks
-        let tasks =
-            Task::find_by_project_id_with_attempt_status(&self.db.pool, project_id).await?;
+        let tasks = Task::find_by_project_id_with_attempt_status(&self.db.pool, project_id).await?;
         let initial_msg = Self::build_tasks_snapshot(tasks);
 
         // Clone necessary data for the async filter
@@ -159,23 +158,22 @@ impl EventService {
         let tasks = Task::find_all_with_attempt_status(&self.db.pool).await?;
         let initial_msg = Self::build_tasks_snapshot(tasks);
 
-        let filtered_stream =
-            BroadcastStream::new(self.msg_store.get_receiver()).filter_map(move |msg_result| {
-                async move {
-                    match msg_result {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            if let Some(patch_op) = patch.0.first() {
-                                if patch_op.path().starts_with("/tasks/") {
-                                    return Some(Ok(LogMsg::JsonPatch(patch)));
-                                }
+        let filtered_stream = BroadcastStream::new(self.msg_store.get_receiver()).filter_map(
+            move |msg_result| async move {
+                match msg_result {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        if let Some(patch_op) = patch.0.first() {
+                            if patch_op.path().starts_with("/tasks/") {
+                                return Some(Ok(LogMsg::JsonPatch(patch)));
                             }
-                            None
                         }
-                        Ok(other) => Some(Ok(other)),
-                        Err(_) => None,
+                        None
                     }
+                    Ok(other) => Some(Ok(other)),
+                    Err(_) => None,
                 }
-            });
+            },
+        );
 
         let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
         let combined_stream = initial_stream.chain(filtered_stream).boxed();
@@ -273,12 +271,9 @@ impl EventService {
         let sessions = Session::find_by_workspace_id(&self.db.pool, workspace_id).await?;
 
         // Collect all execution processes across all sessions in one query
-        let processes = ExecutionProcess::find_by_workspace_id(
-            &self.db.pool,
-            workspace_id,
-            show_soft_deleted,
-        )
-        .await?;
+        let processes =
+            ExecutionProcess::find_by_workspace_id(&self.db.pool, workspace_id, show_soft_deleted)
+                .await?;
 
         // Collect session IDs for filtering
         let session_ids: Vec<Uuid> = sessions.iter().map(|s| s.id).collect();

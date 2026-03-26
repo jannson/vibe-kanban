@@ -4791,6 +4791,7 @@ dependencies = [
  "remote",
  "reqwest",
  "rust-embed",
+ "rustls",
  "secrecy",
  "security-framework",
  "serde",

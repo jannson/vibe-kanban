@@ -101,12 +101,8 @@ impl LocalContainerService {
             None => return default_use_original_repos,
         };
 
-        if let Err(err) = Workspace::update_use_original_repos(
-            &db.pool,
-            workspace.id,
-            inferred,
-        )
-        .await
+        if let Err(err) =
+            Workspace::update_use_original_repos(&db.pool, workspace.id, inferred).await
         {
             tracing::warn!(
                 "Failed to backfill use_original_repos for workspace {}: {}",
@@ -539,8 +535,9 @@ impl LocalContainerService {
                     ExecutionProcessStatus::Running
                 );
 
+                let mut already_finalized = false;
+
                 if success || cleanup_done {
-                    // Commit changes (if any) and get feedback about whether changes were made
                     let changes_committed = match container.try_commit_changes(&ctx).await {
                         Ok(committed) => committed,
                         Err(e) => {
@@ -570,12 +567,14 @@ impl LocalContainerService {
                             ctx.workspace.id
                         );
 
-                        // Manually finalize task since we're bypassing normal execution flow
+                        // Manually finalize task since we're bypassing normal execution flow.
+                        // Mark finalized so the generic finalize branch below does not notify twice.
                         container.finalize_task(publisher.as_ref().ok(), &ctx).await;
+                        already_finalized = true;
                     }
                 }
 
-                if container.should_finalize(&ctx) {
+                if !already_finalized && container.should_finalize(&ctx) {
                     // Only execute queued messages if the execution succeeded
                     // If it failed or was killed, just clear the queue and finalize
                     let should_execute_queued = !matches!(
@@ -1028,13 +1027,7 @@ impl ContainerService for LocalContainerService {
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
 
         let default_use_original_repos = self.config.read().await.default_use_original_repos;
-        if Self::resolve_use_original_repos(
-            &self.db,
-            workspace,
-            default_use_original_repos,
-        )
-        .await
-        {
+        if Self::resolve_use_original_repos(&self.db, workspace, default_use_original_repos).await {
             let no_git_mode = self
                 .is_subtask_original_repo_no_git_mode(workspace, true)
                 .await?;
@@ -1140,13 +1133,7 @@ impl ContainerService for LocalContainerService {
         }
 
         let default_use_original_repos = self.config.read().await.default_use_original_repos;
-        if Self::resolve_use_original_repos(
-            &self.db,
-            workspace,
-            default_use_original_repos,
-        )
-        .await
-        {
+        if Self::resolve_use_original_repos(&self.db, workspace, default_use_original_repos).await {
             let no_git_mode = self
                 .is_subtask_original_repo_no_git_mode(workspace, true)
                 .await?;
@@ -1505,12 +1492,9 @@ impl ContainerService for LocalContainerService {
 
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError> {
         let default_use_original_repos = self.config.read().await.default_use_original_repos;
-        let use_original_repos = Self::resolve_use_original_repos(
-            &self.db,
-            &ctx.workspace,
-            default_use_original_repos,
-        )
-        .await;
+        let use_original_repos =
+            Self::resolve_use_original_repos(&self.db, &ctx.workspace, default_use_original_repos)
+                .await;
         if self
             .is_subtask_original_repo_no_git_mode(&ctx.workspace, use_original_repos)
             .await?
@@ -1523,9 +1507,7 @@ impl ContainerService for LocalContainerService {
 
         let auto_commit = self.config.read().await.auto_commit_enabled;
         if !auto_commit {
-            tracing::debug!(
-                "Skipping auto-commit: disabled via config"
-            );
+            tracing::debug!("Skipping auto-commit: disabled via config");
             return Ok(false);
         }
         if !matches!(

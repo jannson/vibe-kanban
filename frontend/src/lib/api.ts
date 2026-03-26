@@ -30,6 +30,8 @@ import {
   Tag,
   TagSearchParams,
   TaskWithAttemptStatus,
+  TestRemoteNotifierTargetRequest,
+  TestRemoteNotifierTargetResponse,
   UpdateProject,
   UpdateTask,
   UpdateTag,
@@ -900,6 +902,15 @@ export const configApi = {
       body: JSON.stringify(config),
     });
     return handleApiResponse<Config>(response);
+  },
+  testRemoteNotifierTarget: async (
+    data: TestRemoteNotifierTargetRequest
+  ): Promise<TestRemoteNotifierTargetResponse> => {
+    const response = await makeRequest('/api/config/remote-notifiers/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<TestRemoteNotifierTargetResponse>(response);
   },
   checkEditorAvailability: async (
     editorType: EditorType

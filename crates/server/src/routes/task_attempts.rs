@@ -165,9 +165,7 @@ async fn ensure_original_repo_available(
             let head = deployment
                 .git()
                 .get_head_info(Path::new(&repo.path))
-                .map_err(|_| {
-                    ApiError::BadRequest("Unable to read repository HEAD".to_string())
-                })?;
+                .map_err(|_| ApiError::BadRequest("Unable to read repository HEAD".to_string()))?;
             let reserved_prefix = format!("{}/", branch_prefix);
             if head.branch.starts_with(&reserved_prefix) {
                 let (uncommitted_count, untracked_count) =
@@ -564,10 +562,7 @@ pub async fn commit_task_attempt(
             .await?
             .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))?;
         let task_uuid_str = task.id.to_string();
-        let first_uuid_section = task_uuid_str
-            .split('-')
-            .next()
-            .unwrap_or(&task_uuid_str);
+        let first_uuid_section = task_uuid_str.split('-').next().unwrap_or(&task_uuid_str);
 
         let mut message = format!("{} (vibe-kanban {})", task.title, first_uuid_section);
 
@@ -1689,26 +1684,29 @@ pub async fn get_close_session_guard(
 ) -> Result<ResponseJson<ApiResponse<CloseSessionGuardResponse>>, ApiError> {
     let pool = &deployment.db().pool;
     if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
-        return Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
-            should_prompt: false,
-            target_branch: None,
-        })));
+        return Ok(ResponseJson(ApiResponse::success(
+            CloseSessionGuardResponse {
+                should_prompt: false,
+                target_branch: None,
+            },
+        )));
     }
 
-    let has_running_non_dev = ExecutionProcess::has_running_non_dev_server_processes_for_workspace(
-        pool,
-        workspace.id,
-    )
-    .await?;
-    let has_running_dev = !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
-        .await?
-        .is_empty();
+    let has_running_non_dev =
+        ExecutionProcess::has_running_non_dev_server_processes_for_workspace(pool, workspace.id)
+            .await?;
+    let has_running_dev =
+        !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
+            .await?
+            .is_empty();
     let has_running_processes = has_running_non_dev || has_running_dev;
     if has_running_processes {
-        return Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
-            should_prompt: false,
-            target_branch: None,
-        })));
+        return Ok(ResponseJson(ApiResponse::success(
+            CloseSessionGuardResponse {
+                should_prompt: false,
+                target_branch: None,
+            },
+        )));
     }
 
     let repos = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
@@ -1736,7 +1734,16 @@ pub async fn get_close_session_guard(
         let repo_merges = Merge::find_by_workspace_and_repo_id(pool, workspace.id, repo.id).await?;
         if repo_merges.into_iter().any(|m| {
             matches!(m, Merge::Direct(_))
-                || matches!(m, Merge::Pr(PrMerge { pr_info: PullRequestInfo { status: MergeStatus::Merged, .. }, .. }))
+                || matches!(
+                    m,
+                    Merge::Pr(PrMerge {
+                        pr_info: PullRequestInfo {
+                            status: MergeStatus::Merged,
+                            ..
+                        },
+                        ..
+                    })
+                )
         }) {
             has_merged_result = true;
         }
@@ -1751,10 +1758,12 @@ pub async fn get_close_session_guard(
         }
     }
 
-    Ok(ResponseJson(ApiResponse::success(CloseSessionGuardResponse {
-        should_prompt: has_merged_result && still_on_task_branch && !has_running_processes,
-        target_branch,
-    })))
+    Ok(ResponseJson(ApiResponse::success(
+        CloseSessionGuardResponse {
+            should_prompt: has_merged_result && still_on_task_branch && !has_running_processes,
+            target_branch,
+        },
+    )))
 }
 
 pub async fn switch_to_target_branch_before_close(
@@ -1768,14 +1777,13 @@ pub async fn switch_to_target_branch_before_close(
         ));
     }
 
-    let has_running_non_dev = ExecutionProcess::has_running_non_dev_server_processes_for_workspace(
-        pool,
-        workspace.id,
-    )
-    .await?;
-    let has_running_dev = !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
-        .await?
-        .is_empty();
+    let has_running_non_dev =
+        ExecutionProcess::has_running_non_dev_server_processes_for_workspace(pool, workspace.id)
+            .await?;
+    let has_running_dev =
+        !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
+            .await?
+            .is_empty();
     if has_running_non_dev || has_running_dev {
         return Err(ApiError::BadRequest(
             "Cannot switch branches while execution processes are running".to_string(),
@@ -1800,7 +1808,9 @@ pub async fn switch_to_target_branch_before_close(
             continue;
         };
         let worktree_path = workspace_path.join(&repo.name);
-        deployment.git().checkout_branch(&worktree_path, target_branch)?;
+        deployment
+            .git()
+            .checkout_branch(&worktree_path, target_branch)?;
     }
 
     Ok(ResponseJson(ApiResponse::success(())))
@@ -1851,7 +1861,6 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_subtask_original_repo_no_git_mode;
     use db::models::{
         project::{CreateProject, Project},
         task::CreateTask,
@@ -1859,6 +1868,8 @@ mod tests {
     };
     use sqlx::{SqlitePool, migrate::Migrator};
     use uuid::Uuid;
+
+    use super::is_subtask_original_repo_no_git_mode;
 
     static MIGRATOR: Migrator = sqlx::migrate!("../db/migrations");
 

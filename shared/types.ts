@@ -204,6 +204,10 @@ export type UpdateMcpServersBody = { servers: { [key in string]?: JsonValue }, }
 
 export type GetMcpServerResponse = { mcp_config: McpConfig, config_path: string, };
 
+export type TestRemoteNotifierTargetRequest = { target: RemoteNotifierTarget, default_timeout_ms: bigint | null, };
+
+export type TestRemoteNotifierTargetResponse = { message: string, };
+
 export type CheckEditorAvailabilityQuery = { editor_type: EditorType, };
 
 export type CheckEditorAvailabilityResponse = { available: boolean, };
@@ -310,9 +314,17 @@ export type DirectoryEntry = { name: string, path: string, is_directory: boolean
 
 export type DirectoryListResponse = { entries: Array<DirectoryEntry>, current_path: string, };
 
-export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, notifications: NotificationConfig, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, default_use_original_repos: boolean, auto_commit_enabled: boolean, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, };
+export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, notifications: NotificationConfig, remote_notifications: RemoteNotificationsConfig, review_ready_notification_strategy: ReviewReadyNotificationStrategy, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, default_use_original_repos: boolean, auto_commit_enabled: boolean, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, };
 
 export type NotificationConfig = { sound_enabled: boolean, push_enabled: boolean, sound_file: SoundFile, };
+
+export type RemoteNotificationsConfig = { enabled: boolean, targets: Array<RemoteNotifierTarget>, default_timeout_ms: bigint, };
+
+export type RemoteNotifierTarget = { id: string, enabled: boolean, label: string | null, url: string, token: string | null, projects: RemoteNotifierProjectFilter, title_regex: string | null, timeout_ms: bigint | null, sound_enabled: boolean, desktop_enabled: boolean, };
+
+export type RemoteNotifierProjectFilter = { "type": "all" } | { "type": "project_ids", "value": Array<string> };
+
+export type ReviewReadyNotificationStrategy = "LOCAL_ONLY" | "REMOTE_ONLY" | "BOTH";
 
 export enum ThemeMode { LIGHT = "LIGHT", DARK = "DARK", SYSTEM = "SYSTEM" }
 

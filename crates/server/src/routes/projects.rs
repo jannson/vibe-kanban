@@ -263,9 +263,9 @@ pub async fn create_project(
         Err(ProjectServiceError::RepositoryAlreadyLinked) => Ok(ResponseJson(ApiResponse::error(
             "This repository is already linked to another project",
         ))),
-        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(ApiResponse::error(
-            "Repository must be directly under the workspace root",
-        ))),
+        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(
+            ApiResponse::error("Repository must be directly under the workspace root"),
+        )),
         Err(e) => Err(ProjectError::CreateFailed(e.to_string()).into()),
     }
 }
@@ -526,9 +526,9 @@ pub async fn add_project_repository(
         Err(ProjectServiceError::RepositoryAlreadyLinked) => Ok(ResponseJson(ApiResponse::error(
             "This repository is already linked to another project",
         ))),
-        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(ApiResponse::error(
-            "Repository must be directly under the workspace root",
-        ))),
+        Err(ProjectServiceError::RepoOutsideWorkspaceRoot(_)) => Ok(ResponseJson(
+            ApiResponse::error("Repository must be directly under the workspace root"),
+        )),
         Err(e) => Err(e.into()),
     }
 }

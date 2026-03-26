@@ -17,15 +17,19 @@ pub enum ConfigError {
     ValidationError(String),
 }
 
-pub type Config = versions::v8::Config;
-pub type NotificationConfig = versions::v8::NotificationConfig;
-pub type EditorConfig = versions::v8::EditorConfig;
-pub type ThemeMode = versions::v8::ThemeMode;
-pub type SoundFile = versions::v8::SoundFile;
-pub type EditorType = versions::v8::EditorType;
-pub type GitHubConfig = versions::v8::GitHubConfig;
-pub type UiLanguage = versions::v8::UiLanguage;
-pub type ShowcaseState = versions::v8::ShowcaseState;
+pub type Config = versions::v10::Config;
+pub type NotificationConfig = versions::v10::NotificationConfig;
+pub type RemoteNotificationsConfig = versions::v10::RemoteNotificationsConfig;
+pub type RemoteNotifierTarget = versions::v10::RemoteNotifierTarget;
+pub type RemoteNotifierProjectFilter = versions::v10::RemoteNotifierProjectFilter;
+pub type ReviewReadyNotificationStrategy = versions::v10::ReviewReadyNotificationStrategy;
+pub type EditorConfig = versions::v10::EditorConfig;
+pub type ThemeMode = versions::v10::ThemeMode;
+pub type SoundFile = versions::v10::SoundFile;
+pub type EditorType = versions::v10::EditorType;
+pub type GitHubConfig = versions::v10::GitHubConfig;
+pub type UiLanguage = versions::v10::UiLanguage;
+pub type ShowcaseState = versions::v10::ShowcaseState;
 
 /// Will always return config, trying old schemas or eventually returning default
 pub async fn load_config_from_file(config_path: &PathBuf) -> Config {
@@ -43,6 +47,7 @@ pub async fn save_config_to_file(
     config: &Config,
     config_path: &PathBuf,
 ) -> Result<(), ConfigError> {
+    config.validate()?;
     let raw_config = serde_json::to_string_pretty(config)?;
     std::fs::write(config_path, raw_config)?;
     Ok(())

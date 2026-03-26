@@ -92,10 +92,7 @@ impl Repo {
         row.map(|row| Self::from_row(&row)).transpose()
     }
 
-    pub async fn find_by_path(
-        pool: &SqlitePool,
-        path: &Path,
-    ) -> Result<Option<Self>, sqlx::Error> {
+    pub async fn find_by_path(pool: &SqlitePool, path: &Path) -> Result<Option<Self>, sqlx::Error> {
         let path_str = path.to_string_lossy().to_string();
         let row = sqlx::query(
             r#"SELECT id,
