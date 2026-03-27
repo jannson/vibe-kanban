@@ -1,4 +1,7 @@
-use std::sync::{Arc, Once, OnceLock};
+use std::{
+    sync::{Arc, Once, OnceLock},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use regex::Regex;
@@ -59,6 +62,12 @@ struct RemoteDelivery<'a> {
     desktop_enabled: bool,
 }
 
+#[derive(Debug, Clone)]
+struct MatchedRemoteNotifierTarget {
+    target: RemoteNotifierTarget,
+    timeout_ms: u64,
+}
+
 /// Cache for WSL root path from PowerShell
 static WSL_ROOT_PATH_CACHE: OnceLock<Option<String>> = OnceLock::new();
 static TLS_PROVIDER_INIT: Once = Once::new();
@@ -94,8 +103,7 @@ impl NotificationService {
                 .await;
             }
             ReviewReadyNotificationStrategy::RemoteOnly => {
-                self.send_remote_notifications(&config.remote_notifications, event)
-                    .await;
+                self.schedule_remote_notifications(&config.remote_notifications, event);
             }
             ReviewReadyNotificationStrategy::Both => {
                 Self::send_notification(
@@ -104,8 +112,7 @@ impl NotificationService {
                     &event.local_message,
                 )
                 .await;
-                self.send_remote_notifications(&config.remote_notifications, event)
-                    .await;
+                self.schedule_remote_notifications(&config.remote_notifications, event);
             }
         }
     }
@@ -122,7 +129,12 @@ impl NotificationService {
             default_timeout_ms,
         };
 
-        self.send_remote_notification(target, &config, &event).await
+        let matched_target = MatchedRemoteNotifierTarget {
+            target: target.clone(),
+            timeout_ms: target.timeout_ms.unwrap_or(config.default_timeout_ms),
+        };
+
+        Self::send_remote_notification(&self.client, &matched_target, &event).await
     }
 
     /// Internal method to send notifications with a given config
@@ -336,7 +348,7 @@ impl NotificationService {
         }
     }
 
-    async fn send_remote_notifications(
+    fn schedule_remote_notifications(
         &self,
         config: &RemoteNotificationsConfig,
         event: &ReviewReadyNotificationEvent,
@@ -345,18 +357,59 @@ impl NotificationService {
             return;
         }
 
+        let matched_targets = Self::match_remote_targets(config, event);
+        if matched_targets.is_empty() {
+            return;
+        }
+
+        tracing::info!(
+            task_id = %event.task_id,
+            project_id = %event.project_id,
+            matched_targets = matched_targets.len(),
+            "Scheduled remote review-ready notifications"
+        );
+
+        let client = self.client.clone();
+        let event = event.clone();
+
+        tokio::spawn(async move {
+            for matched_target in matched_targets {
+                let target = &matched_target.target;
+                if let Err(err) =
+                    Self::send_remote_notification(&client, &matched_target, &event).await
+                {
+                    tracing::warn!(
+                        target_id = %target.id,
+                        task_id = %event.task_id,
+                        project_id = %event.project_id,
+                        error = %err,
+                        "Remote notifier delivery failed"
+                    );
+                } else {
+                    tracing::info!(
+                        target_id = %target.id,
+                        task_id = %event.task_id,
+                        project_id = %event.project_id,
+                        "Remote notifier delivered"
+                    );
+                }
+            }
+        });
+    }
+
+    fn match_remote_targets(
+        config: &RemoteNotificationsConfig,
+        event: &ReviewReadyNotificationEvent,
+    ) -> Vec<MatchedRemoteNotifierTarget> {
+        let mut matched_targets = Vec::new();
+
         for target in &config.targets {
             match Self::match_remote_target(target, event) {
                 Ok(true) => {
-                    if let Err(err) = self.send_remote_notification(target, config, event).await {
-                        tracing::warn!(
-                            target_id = %target.id,
-                            task_id = %event.task_id,
-                            project_id = %event.project_id,
-                            error = %err,
-                            "Remote notifier delivery failed"
-                        );
-                    }
+                    matched_targets.push(MatchedRemoteNotifierTarget {
+                        target: target.clone(),
+                        timeout_ms: target.timeout_ms.unwrap_or(config.default_timeout_ms),
+                    });
                 }
                 Ok(false) => {}
                 Err(err) => {
@@ -370,6 +423,8 @@ impl NotificationService {
                 }
             }
         }
+
+        matched_targets
     }
 
     fn match_remote_target(
@@ -409,12 +464,11 @@ impl NotificationService {
     }
 
     async fn send_remote_notification(
-        &self,
-        target: &RemoteNotifierTarget,
-        config: &RemoteNotificationsConfig,
+        client: &Client,
+        matched_target: &MatchedRemoteNotifierTarget,
         event: &ReviewReadyNotificationEvent,
     ) -> Result<(), String> {
-        let timeout_ms = target.timeout_ms.unwrap_or(config.default_timeout_ms);
+        let target = &matched_target.target;
         let payload = RemoteNotifierPayload {
             schema_version: "v1",
             event: "task_review_ready",
@@ -435,10 +489,9 @@ impl NotificationService {
             },
         };
 
-        let mut request = self
-            .client
+        let mut request = client
             .post(&target.url)
-            .timeout(std::time::Duration::from_millis(timeout_ms))
+            .timeout(Duration::from_millis(matched_target.timeout_ms))
             .json(&payload);
 
         if let Some(token) = target.token.as_deref()
@@ -475,7 +528,10 @@ impl NotificationService {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use chrono::Utc;
     use tokio::sync::RwLock;
@@ -514,7 +570,10 @@ mod tests {
         assert_eq!(event.task_title, "Test Notification");
         assert_eq!(event.project_name.as_deref(), Some("Vibe Kanban"));
         assert_eq!(event.status, "inreview");
-        assert_eq!(event.branch.as_deref(), Some("settings/remote-notifier-test"));
+        assert_eq!(
+            event.branch.as_deref(),
+            Some("settings/remote-notifier-test")
+        );
     }
 
     #[test]
@@ -570,7 +629,7 @@ mod tests {
             default_timeout_ms: 1500,
         };
 
-        service.send_remote_notifications(&config, &event).await;
+        service.schedule_remote_notifications(&config, &event);
     }
 
     #[tokio::test]
@@ -587,5 +646,44 @@ mod tests {
 
         let service = NotificationService::new(Arc::new(RwLock::new(config)));
         service.notify_review_ready(&base_event()).await;
+    }
+
+    #[tokio::test]
+    async fn notify_review_ready_remote_only_ignores_delivery_failures() {
+        let mut config = Config::default();
+        config.remote_notifications = RemoteNotificationsConfig {
+            enabled: true,
+            targets: vec![RemoteNotifierTarget {
+                id: "target-a".to_string(),
+                url: "http://127.0.0.1:9/notify".to_string(),
+                ..RemoteNotifierTarget::default()
+            }],
+            default_timeout_ms: 200,
+        };
+        config.review_ready_notification_strategy = ReviewReadyNotificationStrategy::RemoteOnly;
+
+        let service = NotificationService::new(Arc::new(RwLock::new(config)));
+        service.notify_review_ready(&base_event()).await;
+    }
+
+    #[tokio::test]
+    async fn notify_review_ready_does_not_block_on_remote_delivery() {
+        let mut config = Config::default();
+        config.remote_notifications = RemoteNotificationsConfig {
+            enabled: true,
+            targets: vec![RemoteNotifierTarget {
+                id: "target-a".to_string(),
+                url: "http://127.0.0.1:9/notify".to_string(),
+                ..RemoteNotifierTarget::default()
+            }],
+            default_timeout_ms: 3_000,
+        };
+        config.review_ready_notification_strategy = ReviewReadyNotificationStrategy::RemoteOnly;
+
+        let service = NotificationService::new(Arc::new(RwLock::new(config)));
+        let started = Instant::now();
+        service.notify_review_ready(&base_event()).await;
+
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 }

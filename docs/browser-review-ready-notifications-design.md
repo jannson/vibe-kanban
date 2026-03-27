@@ -2105,3 +2105,35 @@ The most important architectural decision to settle next is whether the notifier
 - or a per-user/per-session registration target
 
 That choice determines most of the backend state model.
+
+## Implementation Notes
+
+### Async remote delivery
+
+The implemented backend behavior for remote notifier delivery is:
+
+- task completion remains the source event
+- local review-ready notifications, when enabled by strategy, still execute inline
+- remote HTTP notifier delivery is scheduled asynchronously
+- task finalization does not wait for remote HTTP responses
+
+This means:
+
+- unreachable notifier targets do not block `In Progress -> In Review`
+- notifier failures are logged as warnings
+- remote notification delivery is best-effort
+
+The current implementation model is intentionally simple:
+
+- match all applicable remote targets before scheduling
+- spawn a background async task
+- send each matched target sequentially inside that background task
+- log `scheduled`, `delivered`, and `failed` outcomes
+
+Tradeoffs:
+
+- this avoids slowing down task completion on slow or failing notifier endpoints
+- a process crash immediately after scheduling can still drop a small number of pending remote notifications
+- no durable queue or retry policy is implemented in v1
+
+This tradeoff is acceptable for the current reminder use case and is preferable to blocking task completion on remote delivery timeouts.
