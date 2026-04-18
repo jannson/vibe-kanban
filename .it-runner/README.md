@@ -11,14 +11,14 @@ Entry file: `.it-runner/project.yaml`
 - `logsDir`: task logs directory (`${DATA_ROOT}/logs`)
 - `cacheDir`: task cache directory (`${DATA_ROOT}/cache`)
 - `envFiles`: dotenv files loaded by it-runner (missing files are ignored)
-  - `.it-runner/envs/shared.env`
-  - `.it-runner/envs/secrets.env` (optional local file)
-  - `.it-runner/.env.local` (optional local override, highest priority)
+  - `.it-runner/envs/000-defaults.env`
+  - `.it-runner/envs/080-secret-local.env` (optional local file)
+  - `.it-runner/envs/010-local.env` (optional local override, highest priority)
 
 ## Path variables
 
 - `PROJECT_ROOT`: repository root path injected by it-runner at runtime.
-- `DATA_ROOT`: external data root path (set in `.it-runner/envs/shared.env`, can be locally overridden).
+- `DATA_ROOT`: external data root path (set in `.it-runner/envs/000-defaults.env`, can be locally overridden).
   - Current default is `/tmp/vibe-kanban-data` (recommended to change to a persistent local path).
 
 ## Task layouts
@@ -36,8 +36,9 @@ This project uses directory style.
 
 - `scripts/run-dev.sh` uses a fixed default `XDG_DATA_HOME` (`/config/vibe-kanban/repo-dev`) unless you explicitly set `XDG_DATA_HOME`.
 - Outside it-runner, `scripts/run-dev.sh` keeps the same default path behavior unless you explicitly set `XDG_DATA_HOME`.
-- `run-dev.sh` runs `check` before startup by default; set `SKIP_CHECKS=1` in `.it-runner/.env.local` if you want faster startup.
+- `run-dev.sh` runs `check` before startup by default; set `SKIP_CHECKS=1` in `.it-runner/envs/010-local.env` if you want faster startup.
 - Default ports stay fixed (`FRONTEND_PORT=3032`, `BACKEND_PORT=3033`, `PROXY_LISTEN_ADDR=:3002`); if occupied, the script now exits early with an explicit conflict message.
+- These defaults now come from `.it-runner/envsets/task-runtimes/dev/<profile>/`, and `dev` selects its profile via `.it-runner/tasks/dev/envs/000-defaults.env`.
 
 ## Release task
 
@@ -46,6 +47,18 @@ This project uses directory style.
   - Build backend release binary (`cargo build --release --bin server`)
   - Install binary to `/config/vibe-kanban/linkease2/vibe-kanban`
   - Refuse to run when a Vite dev server is detected
+
+## Task-centric patterns in this repo
+
+- `dev`
+  - default selector: `.it-runner/tasks/dev/envs/000-defaults.env`
+  - runtime profile: `.it-runner/envsets/task-runtimes/dev/<profile>/`
+- `remote-dev`
+  - default selector: `.it-runner/tasks/remote-dev/envs/000-defaults.env`
+  - runtime profile: `.it-runner/envsets/task-runtimes/remote-dev/<profile>/`
+- `linkease-v2-release`
+  - default selector: `.it-runner/tasks/linkease-v2-release/envs/000-defaults.env`
+  - runtime profile: `.it-runner/envsets/task-runtimes/linkease-v2-release/<profile>/`
 
 ## Minimal task fields
 
@@ -61,7 +74,7 @@ Shared defaults are in `.it-runner/tasks/_includes/base.yaml` and are merged wit
 
 Do not commit local secrets or local overrides:
 
-- `.it-runner/envs/secrets.env`
+- `.it-runner/envs/080-secret-local.env`
 - `.it-runner/tasks/**/task.local.yaml`
 - `.it-runner/logs/` and `.it-runner/cache/` when using repo-local storage
 

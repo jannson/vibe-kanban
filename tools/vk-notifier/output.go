@@ -5,25 +5,23 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strconv"
 )
 
 type localOutput struct {
 	soundFile      string
 	desktopEnabled bool
+	volume         float64
 }
 
 func (o localOutput) playSound() error {
-	if o.soundFile != "" {
-		return playSoundFile(o.soundFile)
-	}
-
 	switch runtime.GOOS {
 	case "darwin":
-		return runFirst(
-			exec.Command("afplay", "/System/Library/Sounds/Glass.aiff"),
-			exec.Command("afplay", "/System/Library/Sounds/Ping.aiff"),
-		)
+		return runFirst(commandsFromArgs(darwinSoundCommandArgs(o.soundFile, o.effectiveVolume()))...)
 	case "linux":
+		if o.soundFile != "" {
+			return playSoundFile(o.soundFile)
+		}
 		return runFirst(
 			exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga"),
 			exec.Command("aplay", "/usr/share/sounds/alsa/Front_Center.wav"),
@@ -34,6 +32,35 @@ func (o localOutput) playSound() error {
 	default:
 		return errors.New("unsupported OS for sound playback")
 	}
+}
+
+func (o localOutput) effectiveVolume() float64 {
+	if o.volume <= 0 {
+		return 1.0
+	}
+	return o.volume
+}
+
+func darwinSoundCommandArgs(soundFile string, volume float64) [][]string {
+	volumeArg := strconv.FormatFloat(volume, 'f', -1, 64)
+	if soundFile != "" {
+		return [][]string{{"afplay", "-v", volumeArg, soundFile}}
+	}
+	return [][]string{
+		{"afplay", "-v", volumeArg, "/System/Library/Sounds/Glass.aiff"},
+		{"afplay", "-v", volumeArg, "/System/Library/Sounds/Ping.aiff"},
+	}
+}
+
+func commandsFromArgs(commands [][]string) []*exec.Cmd {
+	result := make([]*exec.Cmd, 0, len(commands))
+	for _, command := range commands {
+		if len(command) == 0 {
+			continue
+		}
+		result = append(result, exec.Command(command[0], command[1:]...))
+	}
+	return result
 }
 
 func playSoundFile(soundFile string) error {

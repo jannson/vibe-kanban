@@ -2,6 +2,11 @@ name: 'dev'
 version: '1'
 description: 'Run unified dev script (scripts/run-dev.sh)'
 tags: ['dev', 'long-running']
+env:
+  autoDirs: ['envs']
+  includeSets:
+    - '../../envsets/task-runtimes/dev/${VIBE_KANBAN_DEV_PROFILE}'
+  required: ['VIBE_KANBAN_DEV_PROFILE']
 watch:
   stateFile: '.it-runner/states/dev.STATE'
 logs:

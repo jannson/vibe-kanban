@@ -3,8 +3,13 @@ include:
 name: 'remote-dev'
 description: 'Run remote docker-compose dev stack (package.json: remote:dev)'
 tags: ['remote', 'docker', 'long-running']
+env:
+  autoDirs: ['envs']
+  includeSets:
+    - '../../envsets/task-runtimes/remote-dev/${VIBE_KANBAN_REMOTE_DEV_PROFILE}'
+  required: ['VIBE_KANBAN_REMOTE_DEV_PROFILE']
 watch:
   stateFile: '${PROJECT_ROOT}/.it-runner/states/remote-dev.STATE'
 processes:
   - name: 'remote-dev'
-    cmd: 'pnpm run remote:dev'
+    cmd: 'cd crates/remote && docker compose --env-file "${REMOTE_DEV_ENV_FILE:-.env.remote}" up --build ; docker compose down -v'

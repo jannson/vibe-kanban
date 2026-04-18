@@ -89,3 +89,5 @@ vibe-kanban-cloud/
 
 .it-runner/states
 
+.it-runner/envs/010-local.env
+.it-runner/envs/080-secret-local.env

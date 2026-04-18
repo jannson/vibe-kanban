@@ -3,6 +3,11 @@ include:
 name: 'linkease-v2-release'
 description: 'Release-mode publish for Linkease v2 (build frontend/server and publish binary)'
 tags: ['release', 'linkease-v2']
+env:
+  autoDirs: ['envs']
+  includeSets:
+    - '../../envsets/task-runtimes/linkease-v2-release/${VIBE_KANBAN_RELEASE_PROFILE}'
+  required: ['VIBE_KANBAN_RELEASE_PROFILE']
 logs:
   rootDir: '/config/demo-data/vibe-kanban/logs'
 run:
@@ -10,6 +15,6 @@ run:
     - 'set -euo pipefail; if pgrep -f "[v]ite --port" >/dev/null 2>&1; then echo "Refusing release: Vite dev server is running" >&2; exit 1; fi'
     - 'corepack pnpm --dir frontend build'
     - 'cargo build --release --bin server'
-    - 'install -d /config/vibe-kanban/linkease2'
-    - 'install -m 0755 target/release/server /config/vibe-kanban/linkease2/vibe-kanban'
-    - 'ls -lh /config/vibe-kanban/linkease2/vibe-kanban'
+    - 'install -d "${VIBE_KANBAN_RELEASE_DIR}"'
+    - 'install -m 0755 target/release/server "${VIBE_KANBAN_RELEASE_DIR}/${VIBE_KANBAN_RELEASE_BINARY}"'
+    - 'ls -lh "${VIBE_KANBAN_RELEASE_DIR}/${VIBE_KANBAN_RELEASE_BINARY}"'

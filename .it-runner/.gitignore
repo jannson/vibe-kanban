@@ -1,5 +1,6 @@
 logs/
 cache/
-envs/secrets.env
+envs/080-secret-local.env
 configs/*.local.*
 tasks/**/task.local.yaml
+envs/010-local.env

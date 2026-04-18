@@ -13,6 +13,14 @@ import (
 
 const version = "0.1.0"
 
+type serveConfig struct {
+	listen         string
+	token          string
+	soundFile      string
+	desktopEnabled bool
+	volume         float64
+}
+
 func main() {
 	logger := log.New(os.Stderr, "vk-notifier: ", log.LstdFlags)
 
@@ -36,26 +44,48 @@ func main() {
 }
 
 func runServe(logger *log.Logger, args []string) int {
+	cfg, err := parseServeConfig(args)
+	if err != nil {
+		logger.Printf("invalid serve config: %v", err)
+		return 2
+	}
+
+	srv := newServer(cfg.token, localOutput{
+		soundFile:      cfg.soundFile,
+		desktopEnabled: cfg.desktopEnabled,
+		volume:         cfg.volume,
+	}, logger)
+
+	logger.Printf("serving on %s", cfg.listen)
+	if err := http.ListenAndServe(cfg.listen, srv.routes(version)); err != nil {
+		logger.Printf("server exited: %v", err)
+		return 1
+	}
+	return 0
+}
+
+func parseServeConfig(args []string) (serveConfig, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := fs.String("listen", "127.0.0.1:43210", "listen address")
 	token := fs.String("token", "", "bearer token")
 	soundFile := fs.String("sound-file", "", "sound file path")
 	desktopEnabled := fs.Bool("desktop-enabled", false, "enable desktop notifications")
+	volume := fs.Float64("volume", 1.0, "global sound volume")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return serveConfig{}, err
 	}
 
-	srv := newServer(*token, localOutput{
+	if *volume <= 0 {
+		return serveConfig{}, fmt.Errorf("volume must be greater than 0")
+	}
+
+	return serveConfig{
+		listen:         *listen,
+		token:          *token,
 		soundFile:      *soundFile,
 		desktopEnabled: *desktopEnabled,
-	}, logger)
-
-	logger.Printf("serving on %s", *listen)
-	if err := http.ListenAndServe(*listen, srv.routes(version)); err != nil {
-		logger.Printf("server exited: %v", err)
-		return 1
-	}
-	return 0
+		volume:         *volume,
+	}, nil
 }
 
 func runTest(logger *log.Logger, args []string) int {
