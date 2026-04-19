@@ -13,6 +13,8 @@ import {
   CreateTag,
   DirectoryListResponse,
   DirectoryEntry,
+  DatabaseVacuumResponse,
+  ExecutionLogCleanupResponse,
   ExecutionProcess,
   ExecutionProcessRepoState,
   GitBranch,
@@ -902,6 +904,18 @@ export const configApi = {
       body: JSON.stringify(config),
     });
     return handleApiResponse<Config>(response);
+  },
+  cleanupExecutionLogs: async (): Promise<ExecutionLogCleanupResponse> => {
+    const response = await makeRequest('/api/config/execution-logs/cleanup', {
+      method: 'POST',
+    });
+    return handleApiResponse<ExecutionLogCleanupResponse>(response);
+  },
+  vacuumDatabase: async (): Promise<DatabaseVacuumResponse> => {
+    const response = await makeRequest('/api/config/database/vacuum', {
+      method: 'POST',
+    });
+    return handleApiResponse<DatabaseVacuumResponse>(response);
   },
   testRemoteNotifierTarget: async (
     data: TestRemoteNotifierTargetRequest

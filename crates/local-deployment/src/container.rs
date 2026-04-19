@@ -1002,6 +1002,10 @@ impl ContainerService for LocalContainerService {
         self.config.read().await.git_branch_prefix.clone()
     }
 
+    async fn execution_log_max_bytes(&self) -> u64 {
+        u64::from(self.config.read().await.execution_log_max_mb) * 1024 * 1024
+    }
+
     fn workspace_to_current_dir(&self, workspace: &Workspace) -> PathBuf {
         PathBuf::from(workspace.container_ref.clone().unwrap_or_default())
     }

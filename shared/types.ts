@@ -294,6 +294,12 @@ export type GetPrCommentsError = { "type": "no_pr_attached" } | { "type": "githu
 
 export type GetPrCommentsQuery = { repo_id: string, };
 
+export type ExecutionLogStorageStats = { database_size_bytes: bigint, wal_size_bytes: bigint, shm_size_bytes: bigint, page_size: bigint, page_count: bigint, freelist_count: bigint, };
+
+export type ExecutionLogCleanupResponse = { storage_before: ExecutionLogStorageStats, storage_after: ExecutionLogStorageStats, deleted_rows: bigint, deleted_bytes: bigint, dropped_rows: bigint, dropped_bytes: bigint, retained_rows: bigint, retained_bytes: bigint, };
+
+export type DatabaseVacuumResponse = { storage_before: ExecutionLogStorageStats, storage_after: ExecutionLogStorageStats, duration_ms: bigint, };
+
 export type UnifiedPrComment = { "comment_type": "general", id: string, author: string, author_association: string, body: string, created_at: string, url: string, } | { "comment_type": "review", id: bigint, author: string, author_association: string, body: string, created_at: string, url: string, path: string, line: bigint | null, diff_hunk: string, };
 
 export type RepoBranchStatus = { repo_id: string, repo_name: string, commits_behind: number | null, commits_ahead: number | null, has_uncommitted_changes: boolean | null, head_oid: string | null, uncommitted_count: number | null, untracked_count: number | null, target_branch_name: string, remote_commits_behind: number | null, remote_commits_ahead: number | null, merges: Array<Merge>, 
@@ -314,7 +320,11 @@ export type DirectoryEntry = { name: string, path: string, is_directory: boolean
 
 export type DirectoryListResponse = { entries: Array<DirectoryEntry>, current_path: string, };
 
-export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, notifications: NotificationConfig, remote_notifications: RemoteNotificationsConfig, review_ready_notification_strategy: ReviewReadyNotificationStrategy, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, default_use_original_repos: boolean, auto_commit_enabled: boolean, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, };
+export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, notifications: NotificationConfig, remote_notifications: RemoteNotificationsConfig, review_ready_notification_strategy: ReviewReadyNotificationStrategy, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, default_use_original_repos: boolean, auto_commit_enabled: boolean, quick_reply_enabled: boolean, quick_reply_phrases: Array<string>, quick_reply_rules: Array<QuickReplyRule>, execution_log_retention_days: number, cleanup_dropped_execution_logs: boolean, execution_log_max_mb: number, execution_log_cleanup_on_startup: boolean, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, };
+
+export type QuickReplyRule = { pattern: string, phrases: Array<string>, };
+
+export type ExecutionLogCleanupStats = { deleted_rows: bigint, deleted_bytes: bigint, dropped_rows: bigint, dropped_bytes: bigint, retained_rows: bigint, retained_bytes: bigint, };
 
 export type NotificationConfig = { sound_enabled: boolean, push_enabled: boolean, sound_file: SoundFile, };
 

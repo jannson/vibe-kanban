@@ -120,7 +120,7 @@
         "description": "Configurar preferencias de nombres de ramas git",
         "branchPrefix": {
           "label": "Prefijo de Rama",
-          "placeholder": "vk",
+          "placeholder": "kb",
           "helper": "Prefijo para nombres de ramas generadas automáticamente. Dejar vacío para no usar prefijo.",
           "preview": "Vista previa:",
           "previewWithPrefix": "{{prefix}}/1a2b-nombre-tarea",
@@ -141,6 +141,26 @@
         "autoCommit": {
           "label": "Auto-commit Changes",
           "helper": "Automatically create a commit after a task completes."
+        },
+        "quickReplies": {
+          "enabled": {
+            "label": "Habilitar frases rápidas",
+            "helper": "Muestra frases rápidas configurables en la entrada de seguimiento de tareas."
+          },
+          "phrases": {
+            "label": "Frases rápidas",
+            "placeholder": "Una frase por línea",
+            "helper": "Administra las frases usadas para sugerencias. Una frase por línea. Cantidad actual: {{count}}"
+          },
+          "rules": {
+            "label": "Reglas de prioridad",
+            "helper": "Cuando la última frase coincide con una expresión regular, las frases vinculadas suben al inicio. Reglas actuales: {{count}}",
+            "add": "Agregar regla",
+            "patternLabel": "Expresión regular",
+            "patternPlaceholder": "Ejemplo: 愿意.*继续|继续.*愿意",
+            "phrasesLabel": "Frases fijadas",
+            "phrasesPlaceholder": "Frases separadas por comas"
+          }
         }
       },
       "pullRequests": {
@@ -237,6 +257,52 @@
           "title": "Introducción",
           "description": "Restablece el flujo de Introducción.",
           "button": "Restablecer"
+        }
+      },
+      "maintenance": {
+        "title": "Mantenimiento",
+        "description": "Controla la retención de logs de ejecución y ejecuta limpiezas bajo demanda.",
+        "executionLogs": {
+          "retentionDays": {
+            "label": "Retención de logs de ejecución (días)",
+            "helper": "Elimina los logs de ejecuciones completadas que sean más antiguos que este valor. Usa 0 para desactivar la limpieza por antigüedad."
+          },
+          "maxMb": {
+            "label": "Límite de logs por ejecución (MB)",
+            "helper": "Deja de persistir stdout/stderr adicionales para una sola ejecución cuando se alcanza este límite. Usa 0 para desactivar el límite."
+          },
+          "cleanupOnStartup": {
+            "label": "Ejecutar limpieza al iniciar",
+            "helper": "Se desactiva por defecto para despliegues más seguros. Actívalo solo si el tiempo de limpieza al iniciar es aceptable en este entorno."
+          },
+          "cleanupDropped": {
+            "label": "Eliminar logs de ejecuciones dropped",
+            "helper": "Quita de inmediato los logs ocultos por restauraciones o recortes de historial."
+          },
+          "cleanupNow": {
+            "title": "Limpiar logs de ejecución ahora",
+            "description": "Ejecuta de inmediato la limpieza por retención y de logs dropped usando la configuración guardada.",
+            "saveFirst": "Guarda la configuración antes de limpiar para aplicar la política más reciente.",
+            "button": "Limpiar ahora",
+            "running": "Limpiando...",
+            "result": "Se eliminaron {{rows}} filas de logs ({{bytes}}).",
+            "breakdown": "Logs dropped: {{droppedRows}} filas ({{droppedBytes}}). Limpieza por retención: {{retainedRows}} filas ({{retainedBytes}}).",
+            "storage": "Archivo DB: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
+            "cleanupError": "No se pudieron limpiar los logs de ejecución."
+          }
+        },
+        "databaseVacuum": {
+          "runNow": {
+            "title": "Compactar base de datos (VACUUM)",
+            "description": "Reescribe el archivo SQLite para recuperar espacio libre después de la limpieza.",
+            "saveFirst": "Guarda la configuración antes de compactar la base de datos.",
+            "warning": "Ejecútalo en un momento de poca actividad. Puede mantener la base ocupada y ralentizar la aplicación hasta que termine.",
+            "button": "Compactar base de datos",
+            "running": "Compactando...",
+            "result": "La compactación terminó en {{durationMs}} ms.",
+            "storage": "Archivo DB: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
+            "vacuumError": "No se pudo compactar la base de datos."
+          }
         }
       }
     },

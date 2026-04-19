@@ -210,21 +210,21 @@ export function ToolbarPlugin() {
       <ToolbarButton
         active={isBold}
         onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'bold')}
-        title="Bold (Cmd+B)"
+        title="Bold"
       >
         <Bold size={iconSize} />
       </ToolbarButton>
       <ToolbarButton
         active={isItalic}
         onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'italic')}
-        title="Italic (Cmd+I)"
+        title="Italic"
       >
         <Italic size={iconSize} />
       </ToolbarButton>
       <ToolbarButton
         active={isUnderline}
         onClick={() => editor.dispatchCommand(FORMAT_TEXT_COMMAND, 'underline')}
-        title="Underline (Cmd+U)"
+        title="Underline"
       >
         <Underline size={iconSize} />
       </ToolbarButton>

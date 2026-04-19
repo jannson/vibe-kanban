@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock, time::Instant};
 
 use axum::{
     Json, Router,
@@ -28,15 +28,56 @@ use services::services::{
 };
 use tokio::fs;
 use ts_rs::TS;
-use utils::{api::oauth::LoginStatus, assets::config_path, response::ApiResponse};
+use utils::{
+    api::oauth::LoginStatus,
+    assets::{asset_dir, config_path},
+    response::ApiResponse,
+};
 
 use crate::{DeploymentImpl, error::ApiError};
+
+static DATABASE_MAINTENANCE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[derive(Debug, Serialize, Deserialize, TS, Clone)]
+pub struct ExecutionLogStorageStats {
+    pub database_size_bytes: u64,
+    pub wal_size_bytes: u64,
+    pub shm_size_bytes: u64,
+    pub page_size: i64,
+    pub page_count: i64,
+    pub freelist_count: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS, Clone)]
+pub struct ExecutionLogCleanupResponse {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub stats: db::models::execution_process_logs::ExecutionLogCleanupStats,
+    pub storage_before: ExecutionLogStorageStats,
+    pub storage_after: ExecutionLogStorageStats,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS, Clone)]
+pub struct DatabaseVacuumResponse {
+    pub storage_before: ExecutionLogStorageStats,
+    pub storage_after: ExecutionLogStorageStats,
+    pub duration_ms: u64,
+}
 
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/info", get(get_user_system_info))
         .route("/config", put(update_config))
-        .route("/config/remote-notifiers/test", post(test_remote_notifier_target))
+        .route(
+            "/config/execution-logs/cleanup",
+            post(cleanup_execution_logs_now),
+        )
+        .route("/config/database/vacuum", post(vacuum_database_now))
+        .route(
+            "/config/remote-notifiers/test",
+            post(test_remote_notifier_target),
+        )
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
         .route("/profiles", get(get_profiles).put(update_profiles))
@@ -45,6 +86,100 @@ pub fn router() -> Router<DeploymentImpl> {
             get(check_editor_availability),
         )
         .route("/agents/check-availability", get(check_agent_availability))
+}
+
+async fn read_execution_log_storage_stats(
+    pool: &sqlx::SqlitePool,
+) -> Result<ExecutionLogStorageStats, sqlx::Error> {
+    let db_path = asset_dir().join("db.sqlite");
+    let wal_path = asset_dir().join("db.sqlite-wal");
+    let shm_path = asset_dir().join("db.sqlite-shm");
+
+    let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+        .fetch_one(pool)
+        .await?;
+    let page_count: i64 = sqlx::query_scalar("PRAGMA page_count")
+        .fetch_one(pool)
+        .await?;
+    let freelist_count: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+        .fetch_one(pool)
+        .await?;
+
+    Ok(ExecutionLogStorageStats {
+        database_size_bytes: std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0),
+        wal_size_bytes: std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0),
+        shm_size_bytes: std::fs::metadata(&shm_path).map(|m| m.len()).unwrap_or(0),
+        page_size,
+        page_count,
+        freelist_count,
+    })
+}
+
+pub async fn cleanup_execution_logs_once(
+    deployment: &DeploymentImpl,
+) -> Result<ExecutionLogCleanupResponse, ApiError> {
+    let _maintenance_guard = DATABASE_MAINTENANCE_LOCK.lock().await;
+    let config = deployment.config().read().await.clone();
+    let pool = &deployment.db().pool;
+    let storage_before = read_execution_log_storage_stats(pool).await?;
+
+    let stats = db::models::execution_process_logs::ExecutionProcessLogs::cleanup_with_policy(
+        pool,
+        config.execution_log_retention_days,
+        config.cleanup_dropped_execution_logs,
+    )
+    .await?;
+
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await;
+
+    let storage_after = read_execution_log_storage_stats(pool).await?;
+
+    Ok(ExecutionLogCleanupResponse {
+        stats,
+        storage_before,
+        storage_after,
+    })
+}
+
+async fn cleanup_execution_logs_now(
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<ExecutionLogCleanupResponse>>, ApiError> {
+    let response = cleanup_execution_logs_once(&deployment).await?;
+    Ok(ResponseJson(ApiResponse::success(response)))
+}
+
+pub async fn vacuum_database_once(
+    deployment: &DeploymentImpl,
+) -> Result<DatabaseVacuumResponse, ApiError> {
+    let _maintenance_guard = DATABASE_MAINTENANCE_LOCK.lock().await;
+    let pool = &deployment.db().pool;
+    let storage_before = read_execution_log_storage_stats(pool).await?;
+
+    let start = Instant::now();
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await;
+    sqlx::query("VACUUM").execute(pool).await?;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(pool)
+        .await;
+
+    let storage_after = read_execution_log_storage_stats(pool).await?;
+
+    Ok(DatabaseVacuumResponse {
+        storage_before,
+        storage_after,
+        duration_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+async fn vacuum_database_now(
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<DatabaseVacuumResponse>>, ApiError> {
+    let response = vacuum_database_once(&deployment).await?;
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

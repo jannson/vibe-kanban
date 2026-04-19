@@ -22,7 +22,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Loader2, Plus, Trash2, Volume2 } from 'lucide-react';
 import {
+  type DatabaseVacuumResponse,
   DEFAULT_PR_DESCRIPTION_PROMPT,
+  type ExecutionLogCleanupResponse,
+  type QuickReplyRule,
   type RemoteNotifierProjectFilter,
   type RemoteNotifierTarget,
   EditorType,
@@ -69,6 +72,14 @@ export function GeneralSettings() {
   const [remoteTargetTestResults, setRemoteTargetTestResults] = useState<
     Record<number, { type: 'success' | 'error'; message: string }>
   >({});
+  const [isCleaningLogs, setIsCleaningLogs] = useState(false);
+  const [logCleanupError, setLogCleanupError] = useState<string | null>(null);
+  const [logCleanupResult, setLogCleanupResult] =
+    useState<ExecutionLogCleanupResponse | null>(null);
+  const [isVacuumingDatabase, setIsVacuumingDatabase] = useState(false);
+  const [vacuumError, setVacuumError] = useState<string | null>(null);
+  const [vacuumResult, setVacuumResult] =
+    useState<DatabaseVacuumResponse | null>(null);
   const [branchPrefixError, setBranchPrefixError] = useState<string | null>(
     null
   );
@@ -101,6 +112,60 @@ export function GeneralSettings() {
     [t]
   );
 
+  const formatQuickReplyPhrases = useCallback((phrases: string[] = []) => {
+    return phrases.join('\n');
+  }, []);
+
+  const parseQuickReplyPhrases = useCallback((value: string) => {
+    const unique = new Set<string>();
+
+    return value
+      .split(/\r?\n/)
+      .map((phrase) => phrase.trim())
+      .filter((phrase) => {
+        if (!phrase || unique.has(phrase)) {
+          return false;
+        }
+        unique.add(phrase);
+        return true;
+      });
+  }, []);
+
+  const formatQuickReplyRulePhrases = useCallback((phrases: string[] = []) => {
+    return phrases.join(', ');
+  }, []);
+
+  const parseQuickReplyRulePhrases = useCallback((value: string) => {
+    const unique = new Set<string>();
+
+    return value
+      .split(/[，,]/)
+      .map((phrase) => phrase.trim())
+      .filter((phrase) => {
+        if (!phrase || unique.has(phrase)) {
+          return false;
+        }
+        unique.add(phrase);
+        return true;
+      });
+  }, []);
+
+  const formatBytes = useCallback((bytes: number | bigint) => {
+    const numericBytes = typeof bytes === 'bigint' ? Number(bytes) : bytes;
+    if (numericBytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = numericBytes;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+
+    const digits = value >= 10 || unitIndex === 0 ? 0 : 1;
+    return `${value.toFixed(digits)} ${units[unitIndex]}`;
+  }, []);
+
   // When config loads or changes externally, update draft only if not dirty
   useEffect(() => {
     if (!config) return;
@@ -129,6 +194,39 @@ export function GeneralSettings() {
       });
     },
     [config]
+  );
+
+  const updateQuickReplyRule = useCallback(
+    (index: number, patch: Partial<QuickReplyRule>) => {
+      if (!draft) return;
+
+      const nextRules = (draft.quick_reply_rules ?? []).map((rule, ruleIndex) =>
+        ruleIndex === index ? { ...rule, ...patch } : rule
+      );
+
+      updateDraft({ quick_reply_rules: nextRules });
+    },
+    [draft, updateDraft]
+  );
+
+  const addQuickReplyRule = useCallback(() => {
+    updateDraft({
+      quick_reply_rules: [
+        ...(draft?.quick_reply_rules ?? []),
+        { pattern: '', phrases: [] },
+      ],
+    });
+  }, [draft?.quick_reply_rules, updateDraft]);
+
+  const removeQuickReplyRule = useCallback(
+    (index: number) => {
+      updateDraft({
+        quick_reply_rules: (draft?.quick_reply_rules ?? []).filter(
+          (_, ruleIndex) => ruleIndex !== index
+        ),
+      });
+    },
+    [draft?.quick_reply_rules, updateDraft]
   );
 
   // Optional: warn on tab close/navigation with unsaved changes
@@ -187,6 +285,40 @@ export function GeneralSettings() {
   const resetOnboarding = async () => {
     if (!config) return;
     updateAndSaveConfig({ onboarding_acknowledged: false });
+  };
+
+  const handleExecutionLogCleanup = async () => {
+    setIsCleaningLogs(true);
+    setLogCleanupError(null);
+
+    try {
+      const result = await configApi.cleanupExecutionLogs();
+      setLogCleanupResult(result);
+    } catch (err) {
+      console.error('Error cleaning execution logs:', err);
+      setLogCleanupError(
+        t('settings.general.maintenance.executionLogs.cleanupNow.cleanupError')
+      );
+    } finally {
+      setIsCleaningLogs(false);
+    }
+  };
+
+  const handleDatabaseVacuum = async () => {
+    setIsVacuumingDatabase(true);
+    setVacuumError(null);
+
+    try {
+      const result = await configApi.vacuumDatabase();
+      setVacuumResult(result);
+    } catch (err) {
+      console.error('Error vacuuming database:', err);
+      setVacuumError(
+        t('settings.general.maintenance.databaseVacuum.runNow.vacuumError')
+      );
+    } finally {
+      setIsVacuumingDatabase(false);
+    }
   };
 
   const parseTimeoutValue = (value: string): bigint | null => {
@@ -654,6 +786,128 @@ export function GeneralSettings() {
               <p className="text-sm text-muted-foreground">
                 {t('settings.general.git.autoCommit.helper')}
               </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="quick-reply-enabled"
+              checked={draft?.quick_reply_enabled ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ quick_reply_enabled: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="quick-reply-enabled" className="cursor-pointer">
+                {t('settings.general.git.quickReplies.enabled.label')}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.git.quickReplies.enabled.helper')}
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="quick-reply-phrases">
+              {t('settings.general.git.quickReplies.phrases.label')}
+            </Label>
+            <textarea
+              id="quick-reply-phrases"
+              className={`flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+                !(draft?.quick_reply_enabled ?? false)
+                  ? 'opacity-50 cursor-not-allowed'
+                  : ''
+              }`}
+              placeholder={t(
+                'settings.general.git.quickReplies.phrases.placeholder'
+              )}
+              value={formatQuickReplyPhrases(draft?.quick_reply_phrases ?? [])}
+              disabled={!(draft?.quick_reply_enabled ?? false)}
+              onChange={(e) =>
+                updateDraft({
+                  quick_reply_phrases: parseQuickReplyPhrases(e.target.value),
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.git.quickReplies.phrases.helper', {
+                count: draft?.quick_reply_phrases?.length ?? 0,
+              })}
+            </p>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label>{t('settings.general.git.quickReplies.rules.label')}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.general.git.quickReplies.rules.helper', {
+                    count: draft?.quick_reply_rules?.length ?? 0,
+                  })}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!(draft?.quick_reply_enabled ?? false)}
+                onClick={addQuickReplyRule}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                {t('settings.general.git.quickReplies.rules.add')}
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              {(draft?.quick_reply_rules ?? []).map((rule, index) => (
+                <div
+                  key={`quick-reply-rule-${index}`}
+                  className="grid gap-2 rounded-md border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                >
+                  <div className="space-y-1">
+                    <Label htmlFor={`quick-reply-rule-pattern-${index}`}>
+                      {t('settings.general.git.quickReplies.rules.patternLabel')}
+                    </Label>
+                    <Input
+                      id={`quick-reply-rule-pattern-${index}`}
+                      placeholder={t(
+                        'settings.general.git.quickReplies.rules.patternPlaceholder'
+                      )}
+                      disabled={!(draft?.quick_reply_enabled ?? false)}
+                      value={rule.pattern}
+                      onChange={(e) =>
+                        updateQuickReplyRule(index, { pattern: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`quick-reply-rule-phrases-${index}`}>
+                      {t('settings.general.git.quickReplies.rules.phrasesLabel')}
+                    </Label>
+                    <Input
+                      id={`quick-reply-rule-phrases-${index}`}
+                      placeholder={t(
+                        'settings.general.git.quickReplies.rules.phrasesPlaceholder'
+                      )}
+                      disabled={!(draft?.quick_reply_enabled ?? false)}
+                      value={formatQuickReplyRulePhrases(rule.phrases)}
+                      onChange={(e) =>
+                        updateQuickReplyRule(index, {
+                          phrases: parseQuickReplyRulePhrases(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="flex items-end justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      disabled={!(draft?.quick_reply_enabled ?? false)}
+                      onClick={() => removeQuickReplyRule(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </CardContent>
@@ -1330,6 +1584,278 @@ export function GeneralSettings() {
             <Button variant="outline" onClick={resetOnboarding}>
               {t('settings.general.safety.onboarding.button')}
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('settings.general.maintenance.title')}</CardTitle>
+          <CardDescription>
+            {t('settings.general.maintenance.description')}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="execution-log-retention-days">
+              {t('settings.general.maintenance.executionLogs.retentionDays.label')}
+            </Label>
+            <Input
+              id="execution-log-retention-days"
+              type="number"
+              min={0}
+              max={3650}
+              value={draft?.execution_log_retention_days ?? 30}
+              onChange={(e) =>
+                updateDraft({
+                  execution_log_retention_days: Math.max(
+                    0,
+                    Number.parseInt(e.target.value || '0', 10) || 0
+                  ),
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'settings.general.maintenance.executionLogs.retentionDays.helper'
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="execution-log-max-mb">
+              {t('settings.general.maintenance.executionLogs.maxMb.label')}
+            </Label>
+            <Input
+              id="execution-log-max-mb"
+              type="number"
+              min={0}
+              max={1024}
+              value={draft?.execution_log_max_mb ?? 20}
+              onChange={(e) =>
+                updateDraft({
+                  execution_log_max_mb: Math.max(
+                    0,
+                    Number.parseInt(e.target.value || '0', 10) || 0
+                  ),
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.maintenance.executionLogs.maxMb.helper')}
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="execution-log-cleanup-on-startup"
+              checked={draft?.execution_log_cleanup_on_startup ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ execution_log_cleanup_on_startup: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label
+                htmlFor="execution-log-cleanup-on-startup"
+                className="cursor-pointer"
+              >
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupOnStartup.label'
+                )}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupOnStartup.helper'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="cleanup-dropped-execution-logs"
+              checked={draft?.cleanup_dropped_execution_logs ?? true}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ cleanup_dropped_execution_logs: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label
+                htmlFor="cleanup-dropped-execution-logs"
+                className="cursor-pointer"
+              >
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupDropped.label'
+                )}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupDropped.helper'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-md border p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium">
+                  {t('settings.general.maintenance.executionLogs.cleanupNow.title')}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {hasUnsavedChanges
+                    ? t(
+                        'settings.general.maintenance.executionLogs.cleanupNow.saveFirst'
+                      )
+                    : t(
+                        'settings.general.maintenance.executionLogs.cleanupNow.description'
+                      )}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={handleExecutionLogCleanup}
+                disabled={hasUnsavedChanges || saving || isCleaningLogs}
+              >
+                {isCleaningLogs ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t(
+                      'settings.general.maintenance.executionLogs.cleanupNow.running'
+                    )}
+                  </>
+                ) : (
+                  t('settings.general.maintenance.executionLogs.cleanupNow.button')
+                )}
+              </Button>
+            </div>
+
+            {logCleanupError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{logCleanupError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {logCleanupResult ? (
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  {t(
+                    'settings.general.maintenance.executionLogs.cleanupNow.result',
+                    {
+                      rows: logCleanupResult.deleted_rows,
+                      bytes: formatBytes(logCleanupResult.deleted_bytes),
+                    }
+                  )}
+                </p>
+                <p>
+                  {t(
+                    'settings.general.maintenance.executionLogs.cleanupNow.breakdown',
+                    {
+                      droppedRows: logCleanupResult.dropped_rows,
+                      droppedBytes: formatBytes(logCleanupResult.dropped_bytes),
+                      retainedRows: logCleanupResult.retained_rows,
+                      retainedBytes: formatBytes(logCleanupResult.retained_bytes),
+                    }
+                  )}
+                </p>
+                <p>
+                  {t(
+                    'settings.general.maintenance.executionLogs.cleanupNow.storage',
+                    {
+                      dbBefore: formatBytes(
+                        logCleanupResult.storage_before.database_size_bytes
+                      ),
+                      dbAfter: formatBytes(
+                        logCleanupResult.storage_after.database_size_bytes
+                      ),
+                      walBefore: formatBytes(
+                        logCleanupResult.storage_before.wal_size_bytes
+                      ),
+                      walAfter: formatBytes(
+                        logCleanupResult.storage_after.wal_size_bytes
+                      ),
+                    }
+                  )}
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-2 rounded-md border p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium">
+                  {t('settings.general.maintenance.databaseVacuum.runNow.title')}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {hasUnsavedChanges
+                    ? t(
+                        'settings.general.maintenance.databaseVacuum.runNow.saveFirst'
+                      )
+                    : t(
+                        'settings.general.maintenance.databaseVacuum.runNow.description'
+                      )}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={handleDatabaseVacuum}
+                disabled={hasUnsavedChanges || saving || isVacuumingDatabase}
+              >
+                {isVacuumingDatabase ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t(
+                      'settings.general.maintenance.databaseVacuum.runNow.running'
+                    )}
+                  </>
+                ) : (
+                  t('settings.general.maintenance.databaseVacuum.runNow.button')
+                )}
+              </Button>
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.maintenance.databaseVacuum.runNow.warning')}
+            </p>
+
+            {vacuumError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{vacuumError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {vacuumResult ? (
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  {t(
+                    'settings.general.maintenance.databaseVacuum.runNow.result',
+                    {
+                      durationMs: vacuumResult.duration_ms,
+                    }
+                  )}
+                </p>
+                <p>
+                  {t(
+                    'settings.general.maintenance.databaseVacuum.runNow.storage',
+                    {
+                      dbBefore: formatBytes(
+                        vacuumResult.storage_before.database_size_bytes
+                      ),
+                      dbAfter: formatBytes(
+                        vacuumResult.storage_after.database_size_bytes
+                      ),
+                      walBefore: formatBytes(
+                        vacuumResult.storage_before.wal_size_bytes
+                      ),
+                      walAfter: formatBytes(
+                        vacuumResult.storage_after.wal_size_bytes
+                      ),
+                    }
+                  )}
+                </p>
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>

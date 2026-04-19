@@ -184,6 +184,12 @@
     "queue": "佇列",
     "cancelQueue": "取消佇列",
     "queuedMessage": "訊息已加入佇列 - 會在目前執行完成後處理",
+    "quickPhrases": "短語",
+    "quickPhrasesFromContext": "來自最新回覆",
+    "quickPhrasesBuiltIn": "內建短語",
+    "quickPhrasesFromConfig": "已設定短語",
+    "quickPhrasesRecent": "最近使用",
+    "quickPhrasesMatchHint": "建議會依照與目前輸入內容的匹配度排序。",
     "runSetupScript": "執行設定腳本",
     "runCleanupScript": "執行清理腳本",
     "noSetupScript": "未為此專案設定設定腳本",
@@ -323,6 +329,16 @@
     "switchAndClose": "切換並關閉",
     "closeOnly": "僅關閉",
     "switchFailed": "切換目標分支失敗"
+  },
+  "resumeTask": {
+    "title": "繼續已完成任務",
+    "description": "已完成任務預設會以唯讀模式開啟，避免誤切換分支。只有在你確定要切回該任務分支並繼續處理時，再點擊繼續任務。",
+    "action": "繼續任務",
+    "continuing": "正在準備任務...",
+    "confirmTitle": "確認切回任務分支？",
+    "confirmMessage": "這一步可能會把目前倉庫切回該任務分支。只有在你確定要繼續這個已完成任務時，才繼續執行。",
+    "confirmAction": "切換並繼續",
+    "switchFailed": "切回任務分支失敗"
   },
   "actionsMenu": {
     "attempt": "嘗試",

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{self, Error as AnyhowError};
 use deployment::{Deployment, DeploymentError};
 use server::{DeploymentImpl, routes};
@@ -78,6 +80,16 @@ async fn main() -> Result<(), VibeKanbanError> {
         .backfill_repo_names()
         .await
         .map_err(DeploymentError::from)?;
+    if deployment
+        .config()
+        .read()
+        .await
+        .execution_log_cleanup_on_startup
+    {
+        if let Err(e) = routes::config::cleanup_execution_logs_once(&deployment).await {
+            tracing::warn!("Failed to cleanup execution logs on startup: {}", e);
+        }
+    }
     deployment.spawn_pr_monitor_service().await;
     deployment
         .track_if_analytics_allowed("session_start", serde_json::json!({}))
@@ -101,6 +113,20 @@ async fn main() -> Result<(), VibeKanbanError> {
             && let Err(e) = publisher.cleanup_shared_tasks().await
         {
             tracing::warn!("Failed to verify shared tasks: {}", e);
+        }
+    });
+
+    let deployment_for_log_cleanup = deployment.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_hours(6));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(e) =
+                routes::config::cleanup_execution_logs_once(&deployment_for_log_cleanup).await
+            {
+                tracing::warn!("Scheduled execution log cleanup failed: {}", e);
+            }
         }
     });
 

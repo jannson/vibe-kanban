@@ -120,7 +120,7 @@
         "description": "設定 Git 分支命名偏好",
         "branchPrefix": {
           "label": "分支前綴",
-          "placeholder": "vk",
+          "placeholder": "kb",
           "helper": "自動產生的分支名稱前綴。留空表示不使用前綴。",
           "preview": "預覽：",
           "previewWithPrefix": "{{prefix}}/1a2b-task-name",
@@ -141,6 +141,26 @@
         "autoCommit": {
           "label": "Auto-commit Changes",
           "helper": "Automatically create a commit after a task completes."
+        },
+        "quickReplies": {
+          "enabled": {
+            "label": "啟用快捷短語",
+            "helper": "在任務跟進輸入框中顯示可設定的快捷短語。"
+          },
+          "phrases": {
+            "label": "快捷短語庫",
+            "placeholder": "每行一個短語",
+            "helper": "管理用於建議的快捷短語。每行一個短語。當前數量：{{count}}"
+          },
+          "rules": {
+            "label": "置頂規則",
+            "helper": "當最後一句匹配到正則時，對應短語會被排到最前。當前規則數：{{count}}",
+            "add": "新增規則",
+            "patternLabel": "正則表達式",
+            "patternPlaceholder": "例如：願意.*繼續|繼續.*願意",
+            "phrasesLabel": "置頂短語",
+            "phrasesPlaceholder": "用逗號分隔多個短語"
+          }
         }
       },
       "pullRequests": {
@@ -237,6 +257,52 @@
           "title": "入門流程",
           "description": "重設入門流程。",
           "button": "重設"
+        }
+      },
+      "maintenance": {
+        "title": "維護",
+        "description": "控制執行日誌保留期，並支援按需立即清理。",
+        "executionLogs": {
+          "retentionDays": {
+            "label": "執行日誌保留天數",
+            "helper": "執行完成後，早於此天數的日誌會被刪除。設為 0 可停用按時間清理。"
+          },
+          "maxMb": {
+            "label": "單次執行日誌上限（MB）",
+            "helper": "單次執行寫入資料庫的 stdout/stderr 達到該上限後，將停止繼續持久化。設為 0 可停用上限。"
+          },
+          "cleanupOnStartup": {
+            "label": "啟動時執行清理",
+            "helper": "預設關閉，以降低上線風險。只有在可接受啟動清理耗時的環境中再開啟。"
+          },
+          "cleanupDropped": {
+            "label": "刪除 dropped 執行日誌",
+            "helper": "立即移除被還原或歷史裁剪隱藏的日誌。"
+          },
+          "cleanupNow": {
+            "title": "立即清理執行日誌",
+            "description": "使用目前已儲存的設定，立刻執行一次保留期與 dropped 日誌清理。",
+            "saveFirst": "請先儲存設定，再執行清理，以套用最新策略。",
+            "button": "立即清理",
+            "running": "清理中...",
+            "result": "已刪除 {{rows}} 行日誌（{{bytes}}）。",
+            "breakdown": "Dropped 日誌：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。",
+            "storage": "資料庫檔案：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
+            "cleanupError": "執行日誌清理失敗。"
+          }
+        },
+        "databaseVacuum": {
+          "runNow": {
+            "title": "壓縮資料庫（VACUUM）",
+            "description": "在清理後重寫 SQLite 資料庫檔案，回收已釋放的空間。",
+            "saveFirst": "請先儲存設定，再執行資料庫壓縮。",
+            "warning": "建議在低峰期執行。壓縮期間資料庫可能處於忙碌狀態，並使應用短暫變慢。",
+            "button": "壓縮資料庫",
+            "running": "壓縮中...",
+            "result": "資料庫壓縮已完成，耗時 {{durationMs}} 毫秒。",
+            "storage": "資料庫檔案：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
+            "vacuumError": "資料庫壓縮失敗。"
+          }
         }
       }
     },

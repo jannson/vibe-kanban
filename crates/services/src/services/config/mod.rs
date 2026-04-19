@@ -18,6 +18,7 @@ pub enum ConfigError {
 }
 
 pub type Config = versions::v10::Config;
+pub type QuickReplyRule = versions::v10::QuickReplyRule;
 pub type NotificationConfig = versions::v10::NotificationConfig;
 pub type RemoteNotificationsConfig = versions::v10::RemoteNotificationsConfig;
 pub type RemoteNotifierTarget = versions::v10::RemoteNotifierTarget;

@@ -9,6 +9,7 @@ use axum::{
 };
 use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessRunReason},
+    execution_process_logs::ExecutionProcessLogs,
     project_repo::ProjectRepo,
     scratch::{Scratch, ScratchType},
     session::{CreateSession, Session},
@@ -169,6 +170,21 @@ pub async fn follow_up(
 
         // Soft-drop the target process and all later processes in that session
         let _ = ExecutionProcess::drop_at_and_after(pool, process.session_id, proc_id).await?;
+
+        if deployment
+            .config()
+            .read()
+            .await
+            .cleanup_dropped_execution_logs
+            && let Err(e) =
+                ExecutionProcessLogs::cleanup_dropped_for_session(pool, process.session_id).await
+        {
+            tracing::warn!(
+                "Failed to cleanup dropped execution logs for session {}: {}",
+                process.session_id,
+                e
+            );
+        }
     }
 
     let latest_agent_session_id =

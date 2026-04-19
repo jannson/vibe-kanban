@@ -142,6 +142,16 @@
     "closeOnly": "閉じるのみ",
     "switchFailed": "ターゲットブランチへの切り替えに失敗しました"
   },
+  "resumeTask": {
+    "title": "完了済みタスクを続行",
+    "description": "完了済みタスクは誤ってブランチを切り替えないよう、既定では読み取り専用で開きます。タスクブランチに戻って作業を続けたいときだけ続行を押してください。",
+    "action": "タスクを続行",
+    "continuing": "タスクを準備中...",
+    "confirmTitle": "タスクブランチへ戻しますか？",
+    "confirmMessage": "この操作で現在のリポジトリがタスクブランチへ切り替わる場合があります。この完了済みタスクを本当に再開したいときだけ続行してください。",
+    "confirmAction": "切り替えて続行",
+    "switchFailed": "タスクブランチへの切り替えに失敗しました"
+  },
   "branches": {
     "changeTarget": {
       "dialog": {
@@ -223,6 +233,12 @@
     "queue": "キューに追加",
     "cancelQueue": "キューをキャンセル",
     "queuedMessage": "メッセージがキューに追加されました - 現在の実行が完了すると実行されます",
+    "quickPhrases": "短いフレーズ",
+    "quickPhrasesFromContext": "最新の返信から",
+    "quickPhrasesBuiltIn": "組み込みフレーズ",
+    "quickPhrasesFromConfig": "設定済みフレーズ",
+    "quickPhrasesRecent": "最近使用",
+    "quickPhrasesMatchHint": "候補は現在の入力内容との一致度で並び替えられます。",
     "runSetupScript": "セットアップスクリプトを実行",
     "runCleanupScript": "クリーンアップスクリプトを実行",
     "noSetupScript": "このプロジェクトにセットアップスクリプトが設定されていません",

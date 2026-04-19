@@ -26,7 +26,7 @@ The default mode is controlled by config:
 Environment variable `VIBE_KANBAN_USE_ORIGINAL_REPOS` is not used for defaults.
 
 **Branch Prefix Check (Block Only When Dirty)**
-If DB detection does not show occupancy and the current HEAD branch of the original repo matches the configured `git_branch_prefix` (for example `vk/*`), allow creation unless the repo is dirty. If there are uncommitted or untracked changes, block creation with an error that indicates the branch matches the reserved prefix and has local changes.
+If DB detection does not show occupancy and the current HEAD branch of the original repo matches the configured `git_branch_prefix` (for example `kb/*`), allow creation unless the repo is dirty. If there are uncommitted or untracked changes, block creation with an error that indicates the branch matches the reserved prefix and has local changes.
 
 **Behavior Summary**
 1. Default is worktree unless `default_use_original_repos = true`.

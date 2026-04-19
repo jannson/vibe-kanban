@@ -13,7 +13,7 @@ pub use v9::{
 use crate::services::config::{ConfigError, versions::v9};
 
 fn default_git_branch_prefix() -> String {
-    "vk".to_string()
+    "kb".to_string()
 }
 
 fn default_pr_auto_description_enabled() -> bool {
@@ -30,6 +30,103 @@ fn default_auto_commit_enabled() -> bool {
 
 fn default_review_ready_notification_strategy() -> ReviewReadyNotificationStrategy {
     ReviewReadyNotificationStrategy::LocalOnly
+}
+
+fn default_quick_reply_enabled() -> bool {
+    true
+}
+
+fn default_execution_log_retention_days() -> u32 {
+    30
+}
+
+fn default_cleanup_dropped_execution_logs() -> bool {
+    true
+}
+
+fn default_execution_log_max_mb() -> u32 {
+    20
+}
+
+fn default_execution_log_cleanup_on_startup() -> bool {
+    false
+}
+
+fn default_quick_reply_phrases() -> Vec<String> {
+    vec![
+        "愿意".to_string(),
+        "要".to_string(),
+        "下一步".to_string(),
+        "请继续".to_string(),
+        "请直接修改".to_string(),
+        "请重新显示".to_string(),
+        "继续".to_string(),
+        "可以".to_string(),
+    ]
+}
+
+fn default_quick_reply_rules() -> Vec<QuickReplyRule> {
+    vec![
+        QuickReplyRule {
+            pattern: "愿意.*下一步|下一步.*愿意".to_string(),
+            phrases: vec!["愿意".to_string(), "下一步".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "要.*下一步|下一步.*要".to_string(),
+            phrases: vec!["要".to_string(), "下一步".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "愿意.*继续|继续.*愿意".to_string(),
+            phrases: vec!["愿意".to_string(), "继续".to_string(), "请继续".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "需要.*下一步|下一步.*需要".to_string(),
+            phrases: vec!["下一步".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "愿意".to_string(),
+            phrases: vec!["愿意".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "要".to_string(),
+            phrases: vec!["要".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "下一步".to_string(),
+            phrases: vec!["下一步".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "继续".to_string(),
+            phrases: vec!["继续".to_string(), "请继续".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "重新显示".to_string(),
+            phrases: vec!["重新显示".to_string(), "请重新显示".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "直接修改|直接改|修改".to_string(),
+            phrases: vec!["直接修改".to_string(), "请直接修改".to_string()],
+        },
+        QuickReplyRule {
+            pattern: "可以".to_string(),
+            phrases: vec!["可以".to_string()],
+        },
+    ]
+}
+
+fn normalize_git_branch_prefix(prefix: String) -> String {
+    if prefix.trim() == "vk" {
+        "kb".to_string()
+    } else {
+        prefix
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct QuickReplyRule {
+    pub pattern: String,
+    #[serde(default)]
+    pub phrases: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -57,6 +154,20 @@ pub struct Config {
     pub default_use_original_repos: bool,
     #[serde(default = "default_auto_commit_enabled")]
     pub auto_commit_enabled: bool,
+    #[serde(default = "default_quick_reply_enabled")]
+    pub quick_reply_enabled: bool,
+    #[serde(default = "default_quick_reply_phrases")]
+    pub quick_reply_phrases: Vec<String>,
+    #[serde(default = "default_quick_reply_rules")]
+    pub quick_reply_rules: Vec<QuickReplyRule>,
+    #[serde(default = "default_execution_log_retention_days")]
+    pub execution_log_retention_days: u32,
+    #[serde(default = "default_cleanup_dropped_execution_logs")]
+    pub cleanup_dropped_execution_logs: bool,
+    #[serde(default = "default_execution_log_max_mb")]
+    pub execution_log_max_mb: u32,
+    #[serde(default = "default_execution_log_cleanup_on_startup")]
+    pub execution_log_cleanup_on_startup: bool,
     #[serde(default)]
     pub showcases: ShowcaseState,
     #[serde(default = "default_pr_auto_description_enabled")]
@@ -91,13 +202,70 @@ impl Config {
             last_app_version: old_config.last_app_version,
             show_release_notes: old_config.show_release_notes,
             language: old_config.language,
-            git_branch_prefix: old_config.git_branch_prefix,
+            git_branch_prefix: normalize_git_branch_prefix(old_config.git_branch_prefix),
             default_use_original_repos: old_config.default_use_original_repos,
             auto_commit_enabled: old_config.auto_commit_enabled,
+            quick_reply_enabled: default_quick_reply_enabled(),
+            quick_reply_phrases: default_quick_reply_phrases(),
+            quick_reply_rules: default_quick_reply_rules(),
+            execution_log_retention_days: default_execution_log_retention_days(),
+            cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
+            execution_log_max_mb: default_execution_log_max_mb(),
+            execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
             showcases: old_config.showcases,
             pr_auto_description_enabled: old_config.pr_auto_description_enabled,
             pr_auto_description_prompt: old_config.pr_auto_description_prompt,
         }
+    }
+
+    fn normalize_legacy_values(mut self) -> Self {
+        self.git_branch_prefix = normalize_git_branch_prefix(self.git_branch_prefix);
+        self.quick_reply_phrases = self
+            .quick_reply_phrases
+            .into_iter()
+            .map(|phrase| phrase.trim().to_string())
+            .filter(|phrase| !phrase.is_empty())
+            .fold(Vec::new(), |mut acc, phrase| {
+                if !acc.contains(&phrase) {
+                    acc.push(phrase);
+                }
+                acc
+            });
+
+        if self.quick_reply_phrases.is_empty() {
+            self.quick_reply_phrases = default_quick_reply_phrases();
+        }
+
+        self.quick_reply_rules = self
+            .quick_reply_rules
+            .into_iter()
+            .filter_map(|rule| {
+                let pattern = rule.pattern.trim().to_string();
+                let phrases = rule
+                    .phrases
+                    .into_iter()
+                    .map(|phrase| phrase.trim().to_string())
+                    .filter(|phrase| !phrase.is_empty())
+                    .fold(Vec::new(), |mut acc, phrase| {
+                        if !acc.contains(&phrase) {
+                            acc.push(phrase);
+                        }
+                        acc
+                    });
+
+                if pattern.is_empty() || phrases.is_empty() {
+                    None
+                } else {
+                    Some(QuickReplyRule { pattern, phrases })
+                }
+            })
+            .collect();
+
+        if self.quick_reply_rules.is_empty() {
+            self.quick_reply_rules = default_quick_reply_rules();
+        }
+
+        self
     }
 
     pub fn from_previous_version(raw_config: &str) -> Result<Self, Error> {
@@ -107,6 +275,49 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), ConfigError> {
         let remote = &self.remote_notifications;
+
+        if self
+            .quick_reply_phrases
+            .iter()
+            .any(|phrase| phrase.trim().is_empty())
+        {
+            return Err(ConfigError::ValidationError(
+                "Quick reply phrases must not contain empty items".to_string(),
+            ));
+        }
+
+        if self.execution_log_retention_days > 3650 {
+            return Err(ConfigError::ValidationError(
+                "Execution log retention must be between 0 and 3650 days".to_string(),
+            ));
+        }
+
+        if self.execution_log_max_mb > 1024 {
+            return Err(ConfigError::ValidationError(
+                "Execution log size cap must be between 0 and 1024 MB".to_string(),
+            ));
+        }
+
+        for rule in &self.quick_reply_rules {
+            if rule.pattern.trim().is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "Quick reply rules must not contain empty patterns".to_string(),
+                ));
+            }
+
+            if rule.phrases.iter().any(|phrase| phrase.trim().is_empty()) {
+                return Err(ConfigError::ValidationError(
+                    "Quick reply rules must not contain empty phrases".to_string(),
+                ));
+            }
+
+            Regex::new(rule.pattern.trim()).map_err(|e| {
+                ConfigError::ValidationError(format!(
+                    "Quick reply rule has invalid regex '{}': {e}",
+                    rule.pattern.trim()
+                ))
+            })?;
+        }
 
         if remote.default_timeout_ms == 0 || remote.default_timeout_ms > 60_000 {
             return Err(ConfigError::ValidationError(
@@ -196,13 +407,14 @@ impl From<String> for Config {
     fn from(raw_config: String) -> Self {
         if let Ok(config) = serde_json::from_str::<Config>(&raw_config)
             && config.config_version == "v10"
-            && config.validate().is_ok()
+            && config.clone().normalize_legacy_values().validate().is_ok()
         {
-            return config;
+            return config.normalize_legacy_values();
         }
 
         match Self::from_previous_version(&raw_config) {
             Ok(config) => {
+                let config = config.normalize_legacy_values();
                 if let Err(e) = config.validate() {
                     tracing::warn!("Config validation failed after migration: {e}");
                     Self::default()
@@ -239,6 +451,13 @@ impl Default for Config {
             git_branch_prefix: default_git_branch_prefix(),
             default_use_original_repos: default_use_original_repos(),
             auto_commit_enabled: default_auto_commit_enabled(),
+            quick_reply_enabled: default_quick_reply_enabled(),
+            quick_reply_phrases: default_quick_reply_phrases(),
+            quick_reply_rules: default_quick_reply_rules(),
+            execution_log_retention_days: default_execution_log_retention_days(),
+            cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
+            execution_log_max_mb: default_execution_log_max_mb(),
+            execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
             showcases: ShowcaseState::default(),
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
@@ -249,9 +468,10 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, RemoteNotificationsConfig, RemoteNotifierProjectFilter, RemoteNotifierTarget,
-        ReviewReadyNotificationStrategy,
+        Config, QuickReplyRule, RemoteNotificationsConfig, RemoteNotifierProjectFilter,
+        RemoteNotifierTarget, ReviewReadyNotificationStrategy,
     };
+    use crate::services::config::versions::v9;
 
     fn base_config() -> Config {
         Config {
@@ -270,6 +490,20 @@ mod tests {
             Config::default().review_ready_notification_strategy,
             ReviewReadyNotificationStrategy::LocalOnly
         );
+    }
+
+    #[test]
+    fn default_quick_reply_config_is_populated() {
+        let config = Config::default();
+
+        assert!(config.quick_reply_enabled);
+        assert!(!config.quick_reply_phrases.is_empty());
+        assert!(config.quick_reply_phrases.contains(&"下一步".to_string()));
+        assert!(!config.quick_reply_rules.is_empty());
+        assert_eq!(config.execution_log_retention_days, 30);
+        assert!(config.cleanup_dropped_execution_logs);
+        assert_eq!(config.execution_log_max_mb, 20);
+        assert!(!config.execution_log_cleanup_on_startup);
     }
 
     #[test]
@@ -338,5 +572,102 @@ mod tests {
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("invalid title_regex"));
+    }
+
+    #[test]
+    fn migrates_legacy_vk_prefix_in_v10_config() {
+        let mut config = Config::default();
+        config.git_branch_prefix = "vk".to_string();
+
+        let raw_config = serde_json::to_string(&config).unwrap();
+        let migrated = Config::from(raw_config);
+
+        assert_eq!(migrated.git_branch_prefix, "kb");
+    }
+
+    #[test]
+    fn migrates_legacy_vk_prefix_from_v9_config() {
+        let mut config = v9::Config::default();
+        config.git_branch_prefix = "vk".to_string();
+
+        let raw_config = serde_json::to_string(&config).unwrap();
+        let migrated = Config::from(raw_config);
+
+        assert_eq!(migrated.git_branch_prefix, "kb");
+    }
+
+    #[test]
+    fn normalizes_quick_reply_phrases() {
+        let mut config = Config::default();
+        config.quick_reply_phrases = vec![
+            " 愿意 ".to_string(),
+            "".to_string(),
+            "愿意".to_string(),
+            "下一步".to_string(),
+        ];
+
+        let raw_config = serde_json::to_string(&config).unwrap();
+
+        let migrated = Config::from(raw_config);
+
+        assert_eq!(
+            migrated.quick_reply_phrases,
+            vec!["愿意".to_string(), "下一步".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalizes_quick_reply_rules() {
+        let mut config = Config::default();
+        config.quick_reply_rules = vec![
+            QuickReplyRule {
+                pattern: " 愿意 ".to_string(),
+                phrases: vec![" 愿意 ".to_string(), "".to_string(), "愿意".to_string()],
+            },
+            QuickReplyRule {
+                pattern: "".to_string(),
+                phrases: vec!["下一步".to_string()],
+            },
+        ];
+
+        let raw_config = serde_json::to_string(&config).unwrap();
+        let migrated = Config::from(raw_config);
+
+        assert_eq!(migrated.quick_reply_rules.len(), 1);
+        assert_eq!(migrated.quick_reply_rules[0].pattern, "愿意");
+        assert_eq!(
+            migrated.quick_reply_rules[0].phrases,
+            vec!["愿意".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_quick_reply_rule_regex() {
+        let mut config = Config::default();
+        config.quick_reply_rules = vec![QuickReplyRule {
+            pattern: "(".to_string(),
+            phrases: vec!["愿意".to_string()],
+        }];
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("invalid regex"));
+    }
+
+    #[test]
+    fn rejects_invalid_execution_log_retention_days() {
+        let mut config = Config::default();
+        config.execution_log_retention_days = 3651;
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Execution log retention"));
+    }
+
+    #[test]
+    fn rejects_invalid_execution_log_max_mb() {
+        let mut config = Config::default();
+        config.execution_log_max_mb = 1025;
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Execution log size cap"));
     }
 }

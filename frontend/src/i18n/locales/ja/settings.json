@@ -120,7 +120,7 @@
         "description": "Gitブランチ名の設定",
         "branchPrefix": {
           "label": "ブランチプレフィックス",
-          "placeholder": "vk",
+          "placeholder": "kb",
           "helper": "自動生成されるブランチ名のプレフィックス。空欄にするとプレフィックスなしになります。",
           "preview": "プレビュー：",
           "previewWithPrefix": "{{prefix}}/1a2b-タスク名",
@@ -141,6 +141,26 @@
         "autoCommit": {
           "label": "Auto-commit Changes",
           "helper": "Automatically create a commit after a task completes."
+        },
+        "quickReplies": {
+          "enabled": {
+            "label": "クイック返信フレーズを有効化",
+            "helper": "タスクのフォローアップ入力欄に設定可能な短いフレーズを表示します。"
+          },
+          "phrases": {
+            "label": "クイック返信フレーズ",
+            "placeholder": "1 行に 1 フレーズ",
+            "helper": "候補に使うフレーズを管理します。1 行に 1 フレーズ。現在の件数: {{count}}"
+          },
+          "rules": {
+            "label": "優先ルール",
+            "helper": "最新の文が正規表現に一致すると、関連フレーズを先頭に表示します。現在のルール数: {{count}}",
+            "add": "ルールを追加",
+            "patternLabel": "正規表現",
+            "patternPlaceholder": "例: 愿意.*继续|继续.*愿意",
+            "phrasesLabel": "優先フレーズ",
+            "phrasesPlaceholder": "カンマ区切りで入力"
+          }
         }
       },
       "pullRequests": {
@@ -237,6 +257,52 @@
           "title": "オンボーディング",
           "description": "オンボーディングフローをリセットします。",
           "button": "リセット"
+        }
+      },
+      "maintenance": {
+        "title": "メンテナンス",
+        "description": "実行ログの保持期間を管理し、必要に応じて即時クリーンアップを実行します。",
+        "executionLogs": {
+          "retentionDays": {
+            "label": "実行ログ保持日数",
+            "helper": "完了済み実行のうち、この日数より古いログを削除します。0 にすると日数ベースの削除を無効化します。"
+          },
+          "maxMb": {
+            "label": "1 実行あたりのログ上限（MB）",
+            "helper": "1 回の実行でデータベースに保存する stdout/stderr がこの上限に達すると、それ以上は永続化しません。0 で上限を無効化します。"
+          },
+          "cleanupOnStartup": {
+            "label": "起動時にクリーンアップを実行",
+            "helper": "安全なロールアウトのため既定では無効です。この環境で起動時クリーンアップ時間を許容できる場合のみ有効にしてください。"
+          },
+          "cleanupDropped": {
+            "label": "dropped 実行ログを削除",
+            "helper": "復元や履歴トリミングで非表示になったログを即時削除します。"
+          },
+          "cleanupNow": {
+            "title": "今すぐ実行ログをクリーンアップ",
+            "description": "保存済み設定に基づいて、保持期間と dropped ログのクリーンアップを直ちに実行します。",
+            "saveFirst": "最新ポリシーを適用するため、クリーンアップ前に設定を保存してください。",
+            "button": "今すぐクリーンアップ",
+            "running": "クリーンアップ中...",
+            "result": "{{rows}} 行のログを削除しました（{{bytes}}）。",
+            "breakdown": "Dropped ログ: {{droppedRows}} 行（{{droppedBytes}}）。保持期間クリーンアップ: {{retainedRows}} 行（{{retainedBytes}}）。",
+            "storage": "DB ファイル: {{dbBefore}} → {{dbAfter}}。WAL: {{walBefore}} → {{walAfter}}。",
+            "cleanupError": "実行ログのクリーンアップに失敗しました。"
+          }
+        },
+        "databaseVacuum": {
+          "runNow": {
+            "title": "データベース圧縮（VACUUM）",
+            "description": "クリーンアップ後に SQLite データベースファイルを書き直し、解放済み領域を回収します。",
+            "saveFirst": "データベース圧縮を実行する前に設定を保存してください。",
+            "warning": "負荷の低い時間帯に実行してください。実行中はデータベースがビジーになり、アプリの応答が一時的に遅くなる可能性があります。",
+            "button": "データベースを圧縮",
+            "running": "圧縮中...",
+            "result": "データベース圧縮が完了しました（{{durationMs}} ms）。",
+            "storage": "DB ファイル: {{dbBefore}} → {{dbAfter}}。WAL: {{walBefore}} → {{walAfter}}。",
+            "vacuumError": "データベース圧縮に失敗しました。"
+          }
         }
       }
     },

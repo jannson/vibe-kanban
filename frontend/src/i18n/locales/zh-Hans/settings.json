@@ -120,7 +120,7 @@
         "description": "配置 git 分支命名偏好",
         "branchPrefix": {
           "label": "分支前缀",
-          "placeholder": "vk",
+          "placeholder": "kb",
           "helper": "自动生成的分支名称的前缀。留空表示无前缀。",
           "preview": "预览：",
           "previewWithPrefix": "{{prefix}}/1a2b-task-name",
@@ -141,6 +141,26 @@
         "autoCommit": {
           "label": "Auto-commit Changes",
           "helper": "Automatically create a commit after a task completes."
+        },
+        "quickReplies": {
+          "enabled": {
+            "label": "启用快捷短语",
+            "helper": "在任务跟进输入框中显示可配置的快捷短语。"
+          },
+          "phrases": {
+            "label": "快捷短语库",
+            "placeholder": "每行一个短语",
+            "helper": "管理用于建议的快捷短语。每行一个短语。当前数量：{{count}}"
+          },
+          "rules": {
+            "label": "置顶规则",
+            "helper": "当最后一句匹配到正则时，对应短语会被顶到最前。当前规则数：{{count}}",
+            "add": "新增规则",
+            "patternLabel": "正则表达式",
+            "patternPlaceholder": "例如：愿意.*继续|继续.*愿意",
+            "phrasesLabel": "置顶短语",
+            "phrasesPlaceholder": "用逗号分隔多个短语"
+          }
         }
       },
       "pullRequests": {
@@ -237,6 +257,52 @@
           "title": "入门流程",
           "description": "重置入门流程。",
           "button": "重置"
+        }
+      },
+      "maintenance": {
+        "title": "维护",
+        "description": "控制执行日志保留期，并支持按需立即清理。",
+        "executionLogs": {
+          "retentionDays": {
+            "label": "执行日志保留天数",
+            "helper": "执行完成后，早于该天数的日志会被删除。设为 0 表示关闭按时间清理。"
+          },
+          "maxMb": {
+            "label": "单次执行日志上限（MB）",
+            "helper": "单次执行写入数据库的 stdout/stderr 达到该上限后，将停止继续持久化。设为 0 表示关闭上限。"
+          },
+          "cleanupOnStartup": {
+            "label": "启动时执行清理",
+            "helper": "默认关闭，以降低上线风险。只有在能接受启动清理耗时的环境中再开启。"
+          },
+          "cleanupDropped": {
+            "label": "删除 dropped 执行日志",
+            "helper": "立即移除被恢复或历史裁剪隐藏掉的日志。"
+          },
+          "cleanupNow": {
+            "title": "立即清理执行日志",
+            "description": "使用当前已保存的设置，立刻执行一次保留期和 dropped 日志清理。",
+            "saveFirst": "请先保存设置，再执行清理，以应用最新策略。",
+            "button": "立即清理",
+            "running": "清理中...",
+            "result": "已删除 {{rows}} 行日志（{{bytes}}）。",
+            "breakdown": "Dropped 日志：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。",
+            "storage": "数据库文件：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
+            "cleanupError": "执行日志清理失败。"
+          }
+        },
+        "databaseVacuum": {
+          "runNow": {
+            "title": "压缩数据库（VACUUM）",
+            "description": "在清理后重写 SQLite 数据库文件，回收已释放的空间。",
+            "saveFirst": "请先保存设置，再执行数据库压缩。",
+            "warning": "建议在低峰期执行。压缩期间数据库可能处于忙碌状态，并导致应用短时变慢。",
+            "button": "压缩数据库",
+            "running": "压缩中...",
+            "result": "数据库压缩已完成，耗时 {{durationMs}} 毫秒。",
+            "storage": "数据库文件：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
+            "vacuumError": "数据库压缩失败。"
+          }
         }
       }
     },

@@ -58,6 +58,8 @@ use crate::services::{
 };
 pub type ContainerRef = String;
 
+const EXECUTION_LOG_CAP_REACHED_MESSAGE: &str = "Execution log storage limit reached; further stdout/stderr for this run is no longer persisted to the database.";
+
 fn raw_messages_to_json_patch_stream(
     raw_messages: Vec<LogMsg>,
 ) -> futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>> {
@@ -651,6 +653,8 @@ pub trait ContainerService {
 
     async fn git_branch_prefix(&self) -> String;
 
+    async fn execution_log_max_bytes(&self) -> u64;
+
     async fn git_branch_from_workspace(&self, workspace_id: &Uuid, task_title: &str) -> String {
         let task_title_id = git_branch_id(task_title);
         let prefix = self.git_branch_prefix().await;
@@ -929,10 +933,11 @@ pub trait ContainerService {
         }
     }
 
-    fn spawn_stream_raw_logs_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
+    async fn spawn_stream_raw_logs_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
         let execution_id = *execution_id;
         let msg_stores = self.msg_stores().clone();
         let db = self.db().clone();
+        let max_persisted_bytes = self.execution_log_max_bytes().await;
 
         tokio::spawn(async move {
             // Get the message store for this execution
@@ -943,14 +948,67 @@ pub trait ContainerService {
 
             if let Some(store) = store {
                 let mut stream = store.history_plus_stream();
+                let mut persisted_bytes = 0_u64;
+                let mut log_cap_reached = false;
 
                 while let Some(Ok(msg)) = stream.next().await {
                     match &msg {
                         LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
+                            if log_cap_reached {
+                                continue;
+                            }
+
                             // Serialize this individual message as a JSONL line
                             match serde_json::to_string(&msg) {
                                 Ok(jsonl_line) => {
                                     let jsonl_line_with_newline = format!("{jsonl_line}\n");
+                                    let line_bytes = jsonl_line_with_newline.len() as u64;
+
+                                    if max_persisted_bytes > 0
+                                        && persisted_bytes.saturating_add(line_bytes)
+                                            > max_persisted_bytes
+                                    {
+                                        let truncation_message = LogMsg::Stderr(
+                                            EXECUTION_LOG_CAP_REACHED_MESSAGE.to_string(),
+                                        );
+
+                                        match serde_json::to_string(&truncation_message) {
+                                            Ok(truncation_line) => {
+                                                let truncation_line_with_newline =
+                                                    format!("{truncation_line}\n");
+
+                                                if let Err(e) =
+                                                    ExecutionProcessLogs::append_log_line(
+                                                        &db.pool,
+                                                        execution_id,
+                                                        &truncation_line_with_newline,
+                                                    )
+                                                    .await
+                                                {
+                                                    tracing::error!(
+                                                        "Failed to append truncation marker for execution {}: {}",
+                                                        execution_id,
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Failed to serialize truncation marker for execution {}: {}",
+                                                    execution_id,
+                                                    e
+                                                );
+                                            }
+                                        }
+
+                                        log_cap_reached = true;
+                                        tracing::warn!(
+                                            "Execution {} reached raw log persistence limit of {} bytes",
+                                            execution_id,
+                                            max_persisted_bytes
+                                        );
+                                        continue;
+                                    }
 
                                     // Append this line to the database
                                     if let Err(e) = ExecutionProcessLogs::append_log_line(
@@ -965,6 +1023,9 @@ pub trait ContainerService {
                                             execution_id,
                                             e
                                         );
+                                    } else {
+                                        persisted_bytes =
+                                            persisted_bytes.saturating_add(line_bytes);
                                     }
                                 }
                                 Err(e) => {
@@ -1282,7 +1343,8 @@ pub trait ContainerService {
             }
         }
 
-        self.spawn_stream_raw_logs_to_db(&execution_process.id);
+        self.spawn_stream_raw_logs_to_db(&execution_process.id)
+            .await;
         Ok(execution_process)
     }
 

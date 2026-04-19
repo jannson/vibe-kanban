@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { AlertTriangle, Plus, X } from 'lucide-react';
+import { AlertTriangle, Loader2, Plus, X } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { tasksApi } from '@/lib/api';
 import { attemptsApi, ApiError } from '@/lib/api';
@@ -98,6 +98,54 @@ function GitErrorBanner() {
   return (
     <div className="mx-4 mt-4 p-3 border border-destructive rounded">
       <div className="text-destructive text-sm">{gitError}</div>
+    </div>
+  );
+}
+
+function TaskResumeGuard({
+  loading,
+  error,
+  onContinue,
+}: {
+  loading: boolean;
+  error: string | null;
+  onContinue: () => void;
+}) {
+  const { t } = useTranslation('tasks');
+
+  return (
+    <div className="h-full flex items-center justify-center p-6 bg-background">
+      <Card className="w-full max-w-2xl">
+        <CardContent className="p-6 space-y-4">
+          <div className="space-y-2">
+            <h3 className="text-base font-semibold">
+              {t('resumeTask.title')}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {t('resumeTask.description')}
+            </p>
+          </div>
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="flex justify-start">
+            <Button onClick={onContinue} disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t('resumeTask.continuing')}
+                </>
+              ) : (
+                t('resumeTask.action')
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -293,9 +341,58 @@ export function ProjectTasks() {
     attempt
   );
 
+  const requiresExplicitResume =
+    selectedTask?.status === 'done' || selectedTask?.status === 'cancelled';
+  const [isResumeUnlocked, setIsResumeUnlocked] = useState(false);
+  const [isResumeLoading, setIsResumeLoading] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIsResumeUnlocked(false);
+    setIsResumeLoading(false);
+    setResumeError(null);
+  }, [selectedTask?.id, attempt?.id]);
+
+  const isFollowUpEnabled = !requiresExplicitResume || isResumeUnlocked;
+
   const { data: branchStatus } = useBranchStatus(attempt?.id, {
-    enabled: !isSubtaskOriginalNoGit,
+    enabled: !isSubtaskOriginalNoGit && isFollowUpEnabled,
   });
+
+  const handleContinueCompletedTask = useCallback(async () => {
+    if (!attempt?.id) return;
+
+    const confirmed = await ConfirmDialog.show({
+      title: t('resumeTask.confirmTitle'),
+      message: t('resumeTask.confirmMessage'),
+      confirmText: t('resumeTask.confirmAction'),
+      cancelText: t('common:cancel', 'Cancel'),
+      variant: 'info',
+    });
+
+    if (confirmed !== 'confirmed') {
+      return;
+    }
+
+    setIsResumeLoading(true);
+    setResumeError(null);
+
+    try {
+      if (!isSubtaskOriginalNoGit) {
+        await attemptsApi.getBranchStatus(attempt.id);
+      }
+      setIsResumeUnlocked(true);
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : t('resumeTask.switchFailed');
+      console.error('Failed to prepare completed task for follow-up:', error);
+      setResumeError(message);
+    } finally {
+      setIsResumeLoading(false);
+    }
+  }, [attempt?.id, isSubtaskOriginalNoGit, t]);
 
   const rawMode = searchParams.get('view') as LayoutMode;
   const mode: LayoutMode =
@@ -1041,7 +1138,15 @@ export function ProjectTasks() {
 
                 <div className="min-h-0 max-h-[50%] border-t overflow-hidden bg-background">
                   <div className="mx-auto w-full max-w-[50rem] h-full min-h-0">
-                    {followUp}
+                    {requiresExplicitResume && !isResumeUnlocked ? (
+                      <TaskResumeGuard
+                        loading={isResumeLoading}
+                        error={resumeError}
+                        onContinue={handleContinueCompletedTask}
+                      />
+                    ) : (
+                      followUp
+                    )}
                   </div>
                 </div>
               </div>

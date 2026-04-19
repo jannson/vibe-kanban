@@ -184,6 +184,12 @@
     "queue": "队列",
     "cancelQueue": "取消队列",
     "queuedMessage": "消息已排队 - 将在当前运行完成时执行",
+    "quickPhrases": "短语",
+    "quickPhrasesFromContext": "来自最新回复",
+    "quickPhrasesBuiltIn": "内置短语",
+    "quickPhrasesFromConfig": "已配置短语",
+    "quickPhrasesRecent": "最近使用",
+    "quickPhrasesMatchHint": "建议会根据当前输入内容的匹配度排序。",
     "runSetupScript": "运行设置脚本",
     "runCleanupScript": "运行清理脚本",
     "noSetupScript": "未为此项目配置设置脚本",
@@ -330,6 +336,16 @@
     "switchAndClose": "切换并关闭",
     "closeOnly": "仅关闭",
     "switchFailed": "切换目标分支失败"
+  },
+  "resumeTask": {
+    "title": "继续已完成任务",
+    "description": "已完成任务默认以只读方式打开，避免误切换分支。只有在你确定要切回该任务分支并继续处理时，再点击继续任务。",
+    "action": "继续任务",
+    "continuing": "正在准备任务...",
+    "confirmTitle": "确认切回任务分支？",
+    "confirmMessage": "这一步可能会把当前仓库切回该任务分支。只有在你确认要继续这个已完成任务时，才继续执行。",
+    "confirmAction": "切换并继续",
+    "switchFailed": "切回任务分支失败"
   },
   "actionsMenu": {
     "attempt": "尝试",

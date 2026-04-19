@@ -142,6 +142,16 @@
     "closeOnly": "닫기만",
     "switchFailed": "대상 브랜치로 전환하지 못했습니다"
   },
+  "resumeTask": {
+    "title": "완료된 작업 계속하기",
+    "description": "완료된 작업은 실수로 브랜치가 전환되는 것을 막기 위해 기본적으로 읽기 전용으로 엽니다. 작업 브랜치로 돌아가 계속 진행할 때만 계속하기를 눌러 주세요.",
+    "action": "작업 계속하기",
+    "continuing": "작업 준비 중...",
+    "confirmTitle": "작업 브랜치로 돌아갈까요?",
+    "confirmMessage": "이 작업은 현재 저장소를 작업 브랜치로 다시 전환할 수 있습니다. 이 완료된 작업을 정말 다시 진행하려는 경우에만 계속하세요.",
+    "confirmAction": "전환 후 계속",
+    "switchFailed": "작업 브랜치로 전환하지 못했습니다"
+  },
   "branches": {
     "changeTarget": {
       "dialog": {
@@ -223,6 +233,12 @@
     "queue": "대기열에 추가",
     "cancelQueue": "대기열 취소",
     "queuedMessage": "메시지가 대기열에 추가됨 - 현재 실행이 완료되면 실행됩니다",
+    "quickPhrases": "빠른 문구",
+    "quickPhrasesFromContext": "최근 답변에서",
+    "quickPhrasesBuiltIn": "기본 문구",
+    "quickPhrasesFromConfig": "설정된 문구",
+    "quickPhrasesRecent": "최근 사용",
+    "quickPhrasesMatchHint": "추천은 현재 입력 내용과의 일치도에 따라 정렬됩니다.",
     "runSetupScript": "설정 스크립트 실행",
     "runCleanupScript": "정리 스크립트 실행",
     "noSetupScript": "이 프로젝트에 설정 스크립트가 구성되어 있지 않습니다",

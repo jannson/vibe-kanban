@@ -120,7 +120,7 @@
         "description": "Configure git branch naming preferences",
         "branchPrefix": {
           "label": "Branch Prefix",
-          "placeholder": "vk",
+          "placeholder": "kb",
           "helper": "Prefix for auto-generated branch names. Leave empty for no prefix.",
           "preview": "Preview:",
           "previewWithPrefix": "{{prefix}}/1a2b-task-name",
@@ -141,6 +141,26 @@
         "autoCommit": {
           "label": "Auto-commit Changes",
           "helper": "Automatically create a commit after a task completes."
+        },
+        "quickReplies": {
+          "enabled": {
+            "label": "Enable Quick Reply Phrases",
+            "helper": "Show configurable quick phrases in the task follow-up input."
+          },
+          "phrases": {
+            "label": "Quick Reply Phrases",
+            "placeholder": "One phrase per line",
+            "helper": "Manage quick phrases used for suggestions. One phrase per line. Current count: {{count}}"
+          },
+          "rules": {
+            "label": "Priority Rules",
+            "helper": "When the latest sentence matches a regex, the linked phrases move to the top. Current rule count: {{count}}",
+            "add": "Add rule",
+            "patternLabel": "Regex pattern",
+            "patternPlaceholder": "Example: 愿意.*继续|继续.*愿意",
+            "phrasesLabel": "Pinned phrases",
+            "phrasesPlaceholder": "Comma-separated phrases"
+          }
         }
       },
       "pullRequests": {
@@ -237,6 +257,52 @@
           "title": "Onboarding",
           "description": "Reset the onboarding flow.",
           "button": "Reset"
+        }
+      },
+      "maintenance": {
+        "title": "Maintenance",
+        "description": "Control execution log retention and run cleanup on demand.",
+        "executionLogs": {
+          "retentionDays": {
+            "label": "Execution Log Retention (days)",
+            "helper": "Logs older than this are deleted after the execution completes. Set to 0 to disable age-based cleanup."
+          },
+          "maxMb": {
+            "label": "Execution Log Size Cap (MB)",
+            "helper": "Stops persisting additional stdout/stderr for a single execution after this limit is reached. Set to 0 to disable the cap."
+          },
+          "cleanupOnStartup": {
+            "label": "Run cleanup on startup",
+            "helper": "Disabled by default for safer rollouts. Enable only if startup cleanup time is acceptable for this environment."
+          },
+          "cleanupDropped": {
+            "label": "Delete dropped execution logs",
+            "helper": "Immediately remove logs hidden by restore or history trimming."
+          },
+          "cleanupNow": {
+            "title": "Clean execution logs now",
+            "description": "Run the same retention and dropped-log cleanup immediately using the saved settings.",
+            "saveFirst": "Save settings before running cleanup so the latest policy is applied.",
+            "button": "Clean now",
+            "running": "Cleaning...",
+            "result": "Deleted {{rows}} log rows ({{bytes}}).",
+            "breakdown": "Dropped logs: {{droppedRows}} rows ({{droppedBytes}}). Retention cleanup: {{retainedRows}} rows ({{retainedBytes}}).",
+            "storage": "Database file: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
+            "cleanupError": "Failed to clean execution logs."
+          }
+        },
+        "databaseVacuum": {
+          "runNow": {
+            "title": "Compact database (VACUUM)",
+            "description": "Rewrite the SQLite database file to reclaim free space after cleanup.",
+            "saveFirst": "Save settings before running database compaction.",
+            "warning": "Run this during a quiet period. It can hold the database busy and may slow the app until it finishes.",
+            "button": "Compact database",
+            "running": "Compacting...",
+            "result": "Database compaction completed in {{durationMs}} ms.",
+            "storage": "Database file: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
+            "vacuumError": "Failed to compact the database."
+          }
         }
       }
     },

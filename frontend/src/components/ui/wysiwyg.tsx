@@ -40,6 +40,8 @@ import { Button } from '@/components/ui/button';
 import { Check, Clipboard, Pencil, Trash2 } from 'lucide-react';
 import { writeClipboardViaBridge } from '@/vscode/bridge';
 
+const BLOCKED_MODIFIER_SHORTCUT_KEYS = new Set(['b', 'i', 'u', 'y', 'z', 'o']);
+
 /** Markdown string representing the editor content */
 export type SerializedEditorState = string;
 
@@ -183,6 +185,26 @@ function WYSIWYGEditor({
     [onPasteFiles, disabled]
   );
 
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (disabled || event.nativeEvent.isComposing) {
+        return;
+      }
+
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+
+      if (!BLOCKED_MODIFIER_SHORTCUT_KEYS.has(event.key.toLowerCase())) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [disabled]
+  );
+
   // Memoized placeholder element
   const placeholderElement = useMemo(
     () =>
@@ -220,6 +242,7 @@ function WYSIWYGEditor({
                       aria-label={
                         disabled ? 'Markdown content' : 'Markdown editor'
                       }
+                      onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                     />
                   }

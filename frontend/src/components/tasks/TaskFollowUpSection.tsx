@@ -6,8 +6,7 @@ import {
   Clock,
   X,
   Paperclip,
-  Terminal,
-  MessageSquare,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -15,19 +14,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 //
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { ScratchType, type TaskWithAttemptStatus } from 'shared/types';
 import { useBranchStatus } from '@/hooks';
-import { useAttemptRepo } from '@/hooks/useAttemptRepo';
 import { useAttemptExecution } from '@/hooks/useAttemptExecution';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { cn } from '@/lib/utils';
@@ -35,8 +29,6 @@ import { cn } from '@/lib/utils';
 import { useReview } from '@/contexts/ReviewProvider';
 import { useClickedElements } from '@/contexts/ClickedElementsProvider';
 import { useEntries } from '@/contexts/EntriesContext';
-import { useKeySubmitFollowUp, Scope } from '@/keyboard';
-import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useProject } from '@/contexts/ProjectContext';
 //
 import { VariantSelector } from '@/components/tasks/VariantSelector';
@@ -51,16 +43,102 @@ import type {
   DraftFollowUpData,
   ExecutorAction,
   ExecutorProfileId,
+  QuickReplyRule,
 } from 'shared/types';
 import { buildResolveConflictsInstructions } from '@/lib/conflicts';
 import { useTranslation } from 'react-i18next';
 import { useScratch } from '@/hooks/useScratch';
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { useQueueStatus } from '@/hooks/useQueueStatus';
-import { imagesApi, attemptsApi } from '@/lib/api';
-import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
-import type { NormalizedComment } from '@/components/ui/wysiwyg/nodes/github-comment-node';
+import { imagesApi } from '@/lib/api';
 import type { Session } from 'shared/types';
+
+const LAST_QUICK_REPLY_STORAGE_KEY = 'task-follow-up-last-quick-reply';
+
+function extractLastSentence(text: string): string {
+  const compact = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .pop();
+
+  if (!compact) return '';
+
+  const segments = compact
+    .split(/(?<=[。！？!?])/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments[segments.length - 1] ?? compact;
+}
+
+function normalizeQuickReplyText(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+function getQuickReplyRulePriority(
+  phrase: string,
+  query: string,
+  rules: QuickReplyRule[]
+): number {
+  const normalizedPhrase = normalizeQuickReplyText(phrase);
+  const normalizedQuery = normalizeQuickReplyText(query);
+
+  if (!normalizedPhrase || !normalizedQuery) return 0;
+
+  let priority = 0;
+
+  if (normalizedQuery.includes(normalizedPhrase)) {
+    priority += 500;
+  }
+
+  rules.forEach((rule, index) => {
+    const pattern = rule.pattern.trim();
+
+    if (!pattern) {
+      return;
+    }
+
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern);
+    } catch {
+      return;
+    }
+
+    if (!regex.test(query)) {
+      return;
+    }
+
+    const matchesRule = rule.phrases.some((token: string) => {
+      const normalizedToken = normalizeQuickReplyText(token);
+      return (
+        normalizedPhrase === normalizedToken ||
+        normalizedPhrase.includes(normalizedToken) ||
+        normalizedToken.includes(normalizedPhrase)
+      );
+    });
+
+    if (matchesRule) {
+      priority += 1_000 - index * 10;
+    }
+  });
+
+  return priority;
+}
+
+function appendQuickPhrase(base: string, phrase: string): string {
+  const trimmed = base.trimEnd();
+  if (!trimmed) {
+    return phrase;
+  }
+
+  if (trimmed.endsWith('\n')) {
+    return `${trimmed}${phrase}`;
+  }
+
+  return `${trimmed}\n${phrase}`;
+}
 
 interface TaskFollowUpSectionProps {
   task: TaskWithAttemptStatus;
@@ -85,11 +163,6 @@ export function TaskFollowUpSection({
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
     useBranchStatus(workspaceId, { enabled: gitEnabled });
-  const { repos, selectedRepoId } = useAttemptRepo(workspaceId);
-
-  const getSelectedRepoId = useCallback(() => {
-    return selectedRepoId ?? repos[0]?.id;
-  }, [selectedRepoId, repos]);
 
   const repoWithConflicts = useMemo(
     () =>
@@ -100,13 +173,12 @@ export function TaskFollowUpSection({
   );
   const { branch: attemptBranch, refetch: refetchAttemptBranch } =
     useAttemptBranch(workspaceId);
-  const { profiles } = useUserSystem();
+  const { profiles, config } = useUserSystem();
   const { comments, generateReviewMarkdown, clearComments } = useReview();
   const {
     generateMarkdown: generateClickedMarkdown,
     clearElements: clearClickedElements,
   } = useClickedElements();
-  const { enableScope, disableScope } = useHotkeysContext();
 
   const reviewMarkdown = useMemo(
     () => generateReviewMarkdown(),
@@ -317,6 +389,44 @@ export function TaskFollowUpSection({
     });
   }, [entries]);
 
+  const [lastQuickReply, setLastQuickReply] = useState(() => {
+    return localStorage.getItem(LAST_QUICK_REPLY_STORAGE_KEY) ?? '';
+  });
+
+  const configuredQuickPhrases = useMemo(
+    () => config?.quick_reply_phrases ?? [],
+    [config?.quick_reply_phrases]
+  );
+  const configuredQuickReplyRules = useMemo(
+    () => config?.quick_reply_rules ?? [],
+    [config?.quick_reply_rules]
+  );
+
+  const rankedQuickPhrases = useMemo(() => {
+    const query = extractLastSentence(displayMessage) || displayMessage.trim();
+
+    return configuredQuickPhrases
+      .map((phrase, index) => ({
+        phrase,
+        index,
+        priority:
+          getQuickReplyRulePriority(phrase, query, configuredQuickReplyRules) +
+          (phrase === lastQuickReply ? 10_000 : 0),
+      }))
+      .sort((left, right) => {
+        if (right.priority !== left.priority) {
+          return right.priority - left.priority;
+        }
+        return left.index - right.index;
+      })
+      .map((item) => item.phrase);
+  }, [
+    configuredQuickPhrases,
+    configuredQuickReplyRules,
+    displayMessage,
+    lastQuickReply,
+  ]);
+
   // Send follow-up action
   const { isSendingFollowUp, followUpError, setFollowUpError, onSendFollowUp } =
     useFollowUpSend({
@@ -374,26 +484,6 @@ export function TaskFollowUpSection({
   ]);
   const isEditable = !isRetryActive && !hasPendingApproval;
 
-  const hasAnyScript = true;
-
-  const handleRunSetupScript = useCallback(async () => {
-    if (!workspaceId || isAttemptRunning) return;
-    try {
-      await attemptsApi.runSetupScript(workspaceId);
-    } catch (error) {
-      console.error('Failed to run setup script:', error);
-    }
-  }, [workspaceId, isAttemptRunning]);
-
-  const handleRunCleanupScript = useCallback(async () => {
-    if (!workspaceId || isAttemptRunning) return;
-    try {
-      await attemptsApi.runCleanupScript(workspaceId);
-    } catch (error) {
-      console.error('Failed to run cleanup script:', error);
-    }
-  }, [workspaceId, isAttemptRunning]);
-
   // Handler to queue the current message for execution after agent finishes
   const handleQueueMessage = useCallback(async () => {
     if (
@@ -429,22 +519,6 @@ export function TaskFollowUpSection({
     cancelDebouncedSave,
     saveToScratch,
   ]);
-
-  // Keyboard shortcut handler - send follow-up or queue depending on state
-  const handleSubmitShortcut = useCallback(
-    (e?: KeyboardEvent) => {
-      e?.preventDefault();
-      if (isAttemptRunning) {
-        // When running, CMD+Enter queues the message (if not already queued)
-        if (!isQueued) {
-          handleQueueMessage();
-        }
-      } else {
-        onSendFollowUp();
-      }
-    },
-    [isAttemptRunning, isQueued, handleQueueMessage, onSendFollowUp]
-  );
 
   // Ref to access setFollowUpMessage without adding it as a dependency
   const setFollowUpMessageRef = useRef(setFollowUpMessage);
@@ -530,57 +604,25 @@ export function TaskFollowUpSection({
     [handlePasteFiles]
   );
 
-  // Handler for GitHub comments insertion
-  const handleGitHubCommentClick = useCallback(async () => {
-    if (!workspaceId) return;
-    const repoId = getSelectedRepoId();
-    if (!repoId) return;
+  const handleInsertQuickPhrase = useCallback((phrase: string) => {
+    localStorage.setItem(LAST_QUICK_REPLY_STORAGE_KEY, phrase);
+    setLastQuickReply(phrase);
 
-    const result = await GitHubCommentsDialog.show({
-      attemptId: workspaceId,
-      repoId,
-    });
-    if (result.comments.length > 0) {
-      // Build markdown for all selected comments
-      const markdownBlocks = result.comments.map((comment) => {
-        const payload: NormalizedComment = {
-          id:
-            comment.comment_type === 'general'
-              ? comment.id
-              : comment.id.toString(),
-          comment_type: comment.comment_type,
-          author: comment.author,
-          body: comment.body,
-          created_at: comment.created_at,
-          url: comment.url,
-          // Include review-specific fields when available
-          ...(comment.comment_type === 'review' && {
-            path: comment.path,
-            line: comment.line != null ? Number(comment.line) : null,
-            diff_hunk: comment.diff_hunk,
-          }),
-        };
-        return '```gh-comment\n' + JSON.stringify(payload, null, 2) + '\n```';
-      });
-
-      const markdown = markdownBlocks.join('\n\n');
-
-      // Same pattern as image paste
-      if (isQueuedRef.current && queuedMessageRef.current) {
-        cancelQueueRef.current();
-        const base = queuedMessageRef.current.data.message;
-        const newMessage = base ? `${base}\n\n${markdown}` : markdown;
-        setLocalMessage(newMessage);
-        setFollowUpMessageRef.current(newMessage);
-      } else {
-        setLocalMessage((prev) => {
-          const newMessage = prev ? `${prev}\n\n${markdown}` : markdown;
-          setFollowUpMessageRef.current(newMessage);
-          return newMessage;
-        });
-      }
+    if (isQueuedRef.current && queuedMessageRef.current) {
+      cancelQueueRef.current();
+      const base = queuedMessageRef.current.data.message;
+      const newMessage = appendQuickPhrase(base, phrase);
+      setLocalMessage(newMessage);
+      setFollowUpMessageRef.current(newMessage);
+      return;
     }
-  }, [workspaceId, getSelectedRepoId]);
+
+    setLocalMessage((prev) => {
+      const newMessage = appendQuickPhrase(prev, phrase);
+      setFollowUpMessageRef.current(newMessage);
+      return newMessage;
+    });
+  }, []);
 
   // Stable onChange handler for WYSIWYGEditor
   const handleEditorChange = useCallback(
@@ -605,39 +647,6 @@ export function TaskFollowUpSection({
         : 'Continue working on this task attempt... Type @ to insert tags or search files.',
     [hasExtraContext]
   );
-
-  // Register keyboard shortcuts
-  useKeySubmitFollowUp(handleSubmitShortcut, {
-    scope: Scope.FOLLOW_UP_READY,
-    enableOnFormTags: ['textarea', 'TEXTAREA'],
-    when: canSendFollowUp && isEditable,
-  });
-
-  // Enable FOLLOW_UP scope when textarea is focused AND editable
-  useEffect(() => {
-    if (isEditable && isTextareaFocused) {
-      enableScope(Scope.FOLLOW_UP);
-    } else {
-      disableScope(Scope.FOLLOW_UP);
-    }
-    return () => {
-      disableScope(Scope.FOLLOW_UP);
-    };
-  }, [isEditable, isTextareaFocused, enableScope, disableScope]);
-
-  // Enable FOLLOW_UP_READY scope when ready to send
-  useEffect(() => {
-    const isReady = isTextareaFocused && isEditable;
-
-    if (isReady) {
-      enableScope(Scope.FOLLOW_UP_READY);
-    } else {
-      disableScope(Scope.FOLLOW_UP_READY);
-    }
-    return () => {
-      disableScope(Scope.FOLLOW_UP_READY);
-    };
-  }, [isTextareaFocused, isEditable, enableScope, disableScope]);
 
   // When a process completes (e.g., agent resolved conflicts), refresh branch status promptly
   const prevRunningRef = useRef<boolean>(isAttemptRunning);
@@ -740,8 +749,6 @@ export function TaskFollowUpSection({
                 onPasteFiles={handlePasteFiles}
                 projectId={projectId}
                 taskAttemptId={workspaceId}
-                onCmdEnter={handleSubmitShortcut}
-                onEnter={handleSubmitShortcut}
                 className="min-h-[40px]"
               />
             </div>
@@ -783,51 +790,40 @@ export function TaskFollowUpSection({
             <Paperclip className="h-4 w-4" />
           </Button>
 
-          {/* GitHub Comments button */}
-          {gitEnabled && (
-            <Button
-              onClick={handleGitHubCommentClick}
-              disabled={!isEditable}
-              size="sm"
-              variant="outline"
-              title="Insert GitHub comment"
-              aria-label="Insert GitHub comment"
-            >
-              <MessageSquare className="h-4 w-4" />
-            </Button>
-          )}
-
-          {/* Scripts dropdown - only show if project has any scripts */}
-          {hasAnyScript && (
+          {config?.quick_reply_enabled && rankedQuickPhrases.length > 0 && (
             <DropdownMenu>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isAttemptRunning}
-                        aria-label="Run scripts"
-                      >
-                        <Terminal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  {isAttemptRunning && (
-                    <TooltipContent side="bottom">
-                      {t('followUp.scriptsDisabledWhileRunning')}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleRunSetupScript}>
-                  {t('followUp.runSetupScript')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleRunCleanupScript}>
-                  {t('followUp.runCleanupScript')}
-                </DropdownMenuItem>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  disabled={!isEditable}
+                  size="sm"
+                  variant="outline"
+                  title={t('followUp.quickPhrases')}
+                  aria-label={t('followUp.quickPhrases')}
+                >
+                  <Sparkles className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  {t('followUp.quickPhrasesFromConfig')}
+                </DropdownMenuLabel>
+                {rankedQuickPhrases.map((phrase, index) => (
+                  <DropdownMenuItem
+                    key={`config-${phrase}`}
+                    onClick={() => handleInsertQuickPhrase(phrase)}
+                  >
+                    {phrase}
+                    {index === 0 && phrase === lastQuickReply ? (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {t('followUp.quickPhrasesRecent')}
+                      </span>
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <div className="px-2 py-1 text-xs text-muted-foreground">
+                  {t('followUp.quickPhrasesMatchHint')}
+                </div>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
