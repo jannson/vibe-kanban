@@ -15,6 +15,8 @@ pub struct ExecutionLogCleanupStats {
     pub dropped_bytes: i64,
     pub retained_rows: i64,
     pub retained_bytes: i64,
+    pub intermediate_rows: i64,
+    pub intermediate_bytes: i64,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
@@ -112,6 +114,48 @@ impl ExecutionProcessLogs {
         Ok(())
     }
 
+    async fn delete_closed_task_intermediate_logs_in_batches(
+        pool: &SqlitePool,
+        keep_latest_execution_logs_per_session: u32,
+    ) -> Result<(), sqlx::Error> {
+        loop {
+            let deleted = sqlx::query(
+                r#"WITH ranked AS (
+                       SELECT
+                           ep.id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ep.session_id
+                               ORDER BY datetime(ep.created_at) DESC, hex(ep.id) DESC
+                           ) AS rn
+                       FROM execution_processes ep
+                       JOIN sessions s ON s.id = ep.session_id
+                       JOIN workspaces w ON w.id = s.workspace_id
+                       JOIN tasks t ON t.id = w.task_id
+                      WHERE t.status IN ('done', 'cancelled')
+                   )
+                   DELETE FROM execution_process_logs
+                    WHERE rowid IN (
+                        SELECT epl.rowid
+                          FROM execution_process_logs epl
+                          JOIN ranked r ON r.id = epl.execution_id
+                         WHERE r.rn > ?
+                         LIMIT ?
+                    )"#,
+            )
+            .bind(keep_latest_execution_logs_per_session as i64)
+            .bind(EXECUTION_LOG_DELETE_BATCH_SIZE)
+            .execute(pool)
+            .await?
+            .rows_affected();
+
+            if deleted == 0 {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Find logs by execution process ID
     pub async fn find_by_execution_id(
         pool: &SqlitePool,
@@ -169,6 +213,8 @@ impl ExecutionProcessLogs {
         pool: &SqlitePool,
         retention_days: u32,
         cleanup_dropped_logs: bool,
+        cleanup_closed_task_intermediate_logs: bool,
+        keep_latest_execution_logs_per_session: u32,
     ) -> Result<ExecutionLogCleanupStats, sqlx::Error> {
         let mut stats = ExecutionLogCleanupStats::default();
 
@@ -219,8 +265,48 @@ impl ExecutionProcessLogs {
             stats.retained_bytes = bytes;
         }
 
-        stats.deleted_rows = stats.dropped_rows + stats.retained_rows;
-        stats.deleted_bytes = stats.dropped_bytes + stats.retained_bytes;
+        if cleanup_closed_task_intermediate_logs {
+            let row = sqlx::query(
+                r#"WITH ranked AS (
+                       SELECT
+                           ep.id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ep.session_id
+                               ORDER BY datetime(ep.created_at) DESC, hex(ep.id) DESC
+                           ) AS rn
+                       FROM execution_processes ep
+                       JOIN sessions s ON s.id = ep.session_id
+                       JOIN workspaces w ON w.id = s.workspace_id
+                       JOIN tasks t ON t.id = w.task_id
+                      WHERE t.status IN ('done', 'cancelled')
+                   )
+                   SELECT
+                        COUNT(*) as count,
+                        COALESCE(SUM(epl.byte_size), 0) as bytes
+                     FROM execution_process_logs epl
+                     JOIN ranked r ON r.id = epl.execution_id
+                    WHERE r.rn > ?"#,
+            )
+            .bind(keep_latest_execution_logs_per_session as i64)
+            .fetch_one(pool)
+            .await?;
+            let count = row.get::<i64, _>("count");
+            let bytes = row.get::<i64, _>("bytes");
+
+            if count > 0 {
+                Self::delete_closed_task_intermediate_logs_in_batches(
+                    pool,
+                    keep_latest_execution_logs_per_session,
+                )
+                .await?;
+            }
+
+            stats.intermediate_rows = count;
+            stats.intermediate_bytes = bytes;
+        }
+
+        stats.deleted_rows = stats.dropped_rows + stats.retained_rows + stats.intermediate_rows;
+        stats.deleted_bytes = stats.dropped_bytes + stats.retained_bytes + stats.intermediate_bytes;
 
         Ok(stats)
     }
@@ -255,6 +341,8 @@ impl ExecutionProcessLogs {
             dropped_bytes: bytes,
             retained_rows: 0,
             retained_bytes: 0,
+            intermediate_rows: 0,
+            intermediate_bytes: 0,
         })
     }
 }

@@ -275,6 +275,14 @@
             "label": "시작 시 정리 실행",
             "helper": "안전한 배포를 위해 기본적으로 비활성화되어 있습니다. 이 환경에서 시작 시 정리 시간을 감당할 수 있을 때만 활성화하세요."
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "완료된 작업의 중간 실행 로그 삭제",
+            "helper": "done 또는 cancelled 작업에 대해 각 세션에서 최신 execution 로그만 남기고 더 오래된 중간 실행 로그를 삭제합니다."
+          },
+          "keepLatestPerSession": {
+            "label": "세션별로 유지할 최신 execution 수",
+            "helper": "완료된 작업을 정리할 때 각 세션에서 이 수만큼의 최신 execution 을 유지합니다. 그 이전 execution 로그는 삭제됩니다."
+          },
           "cleanupDropped": {
             "label": "dropped 실행 로그 삭제",
             "helper": "복원 또는 히스토리 정리로 숨겨진 로그를 즉시 제거합니다."
@@ -286,7 +294,7 @@
             "button": "지금 정리",
             "running": "정리 중...",
             "result": "{{rows}}개 로그 행을 삭제했습니다 ({{bytes}}).",
-            "breakdown": "Dropped 로그: {{droppedRows}}행 ({{droppedBytes}}). 보관 기간 정리: {{retainedRows}}행 ({{retainedBytes}}).",
+            "breakdown": "Dropped 로그: {{droppedRows}}행 ({{droppedBytes}}). 보관 기간 정리: {{retainedRows}}행 ({{retainedBytes}}). 완료된 작업의 중간 로그: {{intermediateRows}}행 ({{intermediateBytes}}).",
             "storage": "DB 파일: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
             "cleanupError": "실행 로그 정리에 실패했습니다."
           }

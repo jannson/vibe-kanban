@@ -275,6 +275,14 @@
             "label": "Ejecutar limpieza al iniciar",
             "helper": "Se desactiva por defecto para despliegues más seguros. Actívalo solo si el tiempo de limpieza al iniciar es aceptable en este entorno."
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "Eliminar logs intermedios de tareas cerradas",
+            "helper": "Para tareas done o cancelled, conserva solo los logs de la ejecución más reciente de cada sesión y elimina las ejecuciones intermedias más antiguas."
+          },
+          "keepLatestPerSession": {
+            "label": "Mantener últimas ejecuciones por sesión",
+            "helper": "Al limpiar tareas cerradas, conserva esta cantidad de ejecuciones más recientes en cada sesión. Los logs de ejecuciones anteriores se eliminan."
+          },
           "cleanupDropped": {
             "label": "Eliminar logs de ejecuciones dropped",
             "helper": "Quita de inmediato los logs ocultos por restauraciones o recortes de historial."
@@ -286,7 +294,7 @@
             "button": "Limpiar ahora",
             "running": "Limpiando...",
             "result": "Se eliminaron {{rows}} filas de logs ({{bytes}}).",
-            "breakdown": "Logs dropped: {{droppedRows}} filas ({{droppedBytes}}). Limpieza por retención: {{retainedRows}} filas ({{retainedBytes}}).",
+            "breakdown": "Logs dropped: {{droppedRows}} filas ({{droppedBytes}}). Limpieza por retención: {{retainedRows}} filas ({{retainedBytes}}). Logs intermedios de tareas cerradas: {{intermediateRows}} filas ({{intermediateBytes}}).",
             "storage": "Archivo DB: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
             "cleanupError": "No se pudieron limpiar los logs de ejecución."
           }

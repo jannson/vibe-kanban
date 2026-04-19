@@ -275,6 +275,14 @@
             "label": "启动时执行清理",
             "helper": "默认关闭，以降低上线风险。只有在能接受启动清理耗时的环境中再开启。"
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "删除已完成任务的中间运行日志",
+            "helper": "对于 done 或 cancelled 的任务，每个会话只保留最新几次 execution 日志，更早的中间运行日志会被删除。"
+          },
+          "keepLatestPerSession": {
+            "label": "每个会话保留最新 execution 数量",
+            "helper": "清理已完成任务时，每个会话保留这么多次最新 execution。更早的 execution 日志会被删除。"
+          },
           "cleanupDropped": {
             "label": "删除 dropped 执行日志",
             "helper": "立即移除被恢复或历史裁剪隐藏掉的日志。"
@@ -286,7 +294,7 @@
             "button": "立即清理",
             "running": "清理中...",
             "result": "已删除 {{rows}} 行日志（{{bytes}}）。",
-            "breakdown": "Dropped 日志：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。",
+            "breakdown": "Dropped 日志：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。已完成任务的中间日志：{{intermediateRows}} 行（{{intermediateBytes}}）。",
             "storage": "数据库文件：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
             "cleanupError": "执行日志清理失败。"
           }

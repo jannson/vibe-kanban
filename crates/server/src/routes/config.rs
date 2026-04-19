@@ -127,6 +127,8 @@ pub async fn cleanup_execution_logs_once(
         pool,
         config.execution_log_retention_days,
         config.cleanup_dropped_execution_logs,
+        config.cleanup_closed_task_intermediate_logs,
+        config.keep_latest_execution_logs_per_session,
     )
     .await?;
 

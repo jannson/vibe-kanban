@@ -275,6 +275,14 @@
             "label": "Run cleanup on startup",
             "helper": "Disabled by default for safer rollouts. Enable only if startup cleanup time is acceptable for this environment."
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "Delete intermediate logs for closed tasks",
+            "helper": "For done or cancelled tasks, keep only the latest execution logs in each session and delete older intermediate runs."
+          },
+          "keepLatestPerSession": {
+            "label": "Keep latest execution logs per session",
+            "helper": "When cleaning closed tasks, keep this many latest executions in each session. Older execution logs are deleted."
+          },
           "cleanupDropped": {
             "label": "Delete dropped execution logs",
             "helper": "Immediately remove logs hidden by restore or history trimming."
@@ -286,7 +294,7 @@
             "button": "Clean now",
             "running": "Cleaning...",
             "result": "Deleted {{rows}} log rows ({{bytes}}).",
-            "breakdown": "Dropped logs: {{droppedRows}} rows ({{droppedBytes}}). Retention cleanup: {{retainedRows}} rows ({{retainedBytes}}).",
+            "breakdown": "Dropped logs: {{droppedRows}} rows ({{droppedBytes}}). Retention cleanup: {{retainedRows}} rows ({{retainedBytes}}). Closed-task intermediate logs: {{intermediateRows}} rows ({{intermediateBytes}}).",
             "storage": "Database file: {{dbBefore}} → {{dbAfter}}. WAL: {{walBefore}} → {{walAfter}}.",
             "cleanupError": "Failed to clean execution logs."
           }

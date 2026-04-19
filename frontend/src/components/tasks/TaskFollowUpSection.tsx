@@ -484,6 +484,22 @@ export function TaskFollowUpSection({
   ]);
   const isEditable = !isRetryActive && !hasPendingApproval;
 
+  const hasFollowUpContent = useMemo(
+    () =>
+      Boolean(
+        localMessage.trim() ||
+          conflictResolutionInstructions ||
+          reviewMarkdown ||
+          clickedMarkdown
+      ),
+    [
+      localMessage,
+      conflictResolutionInstructions,
+      reviewMarkdown,
+      clickedMarkdown,
+    ]
+  );
+
   // Handler to queue the current message for execution after agent finishes
   const handleQueueMessage = useCallback(async () => {
     if (
@@ -518,6 +534,32 @@ export function TaskFollowUpSection({
     queueMessage,
     cancelDebouncedSave,
     saveToScratch,
+  ]);
+
+  const handlePrimaryEnterAction = useCallback(() => {
+    if (!isEditable) {
+      return;
+    }
+
+    if (isAttemptRunning) {
+      if (!isQueueLoading && hasFollowUpContent) {
+        void handleQueueMessage();
+      }
+      return;
+    }
+
+    if (canSendFollowUp && !isSendingFollowUp) {
+      void onSendFollowUp();
+    }
+  }, [
+    isEditable,
+    isAttemptRunning,
+    isQueueLoading,
+    hasFollowUpContent,
+    handleQueueMessage,
+    canSendFollowUp,
+    isSendingFollowUp,
+    onSendFollowUp,
   ]);
 
   // Ref to access setFollowUpMessage without adding it as a dependency
@@ -746,6 +788,7 @@ export function TaskFollowUpSection({
                 value={displayMessage}
                 onChange={handleEditorChange}
                 disabled={!isEditable}
+                onEnter={handlePrimaryEnterAction}
                 onPasteFiles={handlePasteFiles}
                 projectId={projectId}
                 taskAttemptId={workspaceId}
@@ -852,10 +895,7 @@ export function TaskFollowUpSection({
                   onClick={handleQueueMessage}
                   disabled={
                     isQueueLoading ||
-                    (!localMessage.trim() &&
-                      !conflictResolutionInstructions &&
-                      !reviewMarkdown &&
-                      !clickedMarkdown)
+                    !hasFollowUpContent
                   }
                   size="sm"
                 >

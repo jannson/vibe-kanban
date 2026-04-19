@@ -275,6 +275,14 @@
             "label": "啟動時執行清理",
             "helper": "預設關閉，以降低上線風險。只有在可接受啟動清理耗時的環境中再開啟。"
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "刪除已完成任務的中間執行日誌",
+            "helper": "對於 done 或 cancelled 的任務，每個工作階段只保留最新幾次 execution 日誌，更早的中間執行日誌會被刪除。"
+          },
+          "keepLatestPerSession": {
+            "label": "每個工作階段保留最新 execution 數量",
+            "helper": "清理已完成任務時，每個工作階段保留這麼多次最新 execution。更早的 execution 日誌會被刪除。"
+          },
           "cleanupDropped": {
             "label": "刪除 dropped 執行日誌",
             "helper": "立即移除被還原或歷史裁剪隱藏的日誌。"
@@ -286,7 +294,7 @@
             "button": "立即清理",
             "running": "清理中...",
             "result": "已刪除 {{rows}} 行日誌（{{bytes}}）。",
-            "breakdown": "Dropped 日誌：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。",
+            "breakdown": "Dropped 日誌：{{droppedRows}} 行（{{droppedBytes}}）。保留期清理：{{retainedRows}} 行（{{retainedBytes}}）。已完成任務的中間日誌：{{intermediateRows}} 行（{{intermediateBytes}}）。",
             "storage": "資料庫檔案：{{dbBefore}} → {{dbAfter}}。WAL：{{walBefore}} → {{walAfter}}。",
             "cleanupError": "執行日誌清理失敗。"
           }

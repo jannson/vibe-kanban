@@ -52,6 +52,14 @@ fn default_execution_log_cleanup_on_startup() -> bool {
     false
 }
 
+fn default_cleanup_closed_task_intermediate_logs() -> bool {
+    true
+}
+
+fn default_keep_latest_execution_logs_per_session() -> u32 {
+    1
+}
+
 fn default_quick_reply_phrases() -> Vec<String> {
     vec![
         "愿意".to_string(),
@@ -168,6 +176,10 @@ pub struct Config {
     pub execution_log_max_mb: u32,
     #[serde(default = "default_execution_log_cleanup_on_startup")]
     pub execution_log_cleanup_on_startup: bool,
+    #[serde(default = "default_cleanup_closed_task_intermediate_logs")]
+    pub cleanup_closed_task_intermediate_logs: bool,
+    #[serde(default = "default_keep_latest_execution_logs_per_session")]
+    pub keep_latest_execution_logs_per_session: u32,
     #[serde(default)]
     pub showcases: ShowcaseState,
     #[serde(default = "default_pr_auto_description_enabled")]
@@ -212,6 +224,9 @@ impl Config {
             cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
             execution_log_max_mb: default_execution_log_max_mb(),
             execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
+            cleanup_closed_task_intermediate_logs: default_cleanup_closed_task_intermediate_logs(),
+            keep_latest_execution_logs_per_session: default_keep_latest_execution_logs_per_session(
+            ),
             showcases: old_config.showcases,
             pr_auto_description_enabled: old_config.pr_auto_description_enabled,
             pr_auto_description_prompt: old_config.pr_auto_description_prompt,
@@ -295,6 +310,14 @@ impl Config {
         if self.execution_log_max_mb > 1024 {
             return Err(ConfigError::ValidationError(
                 "Execution log size cap must be between 0 and 1024 MB".to_string(),
+            ));
+        }
+
+        if self.keep_latest_execution_logs_per_session == 0
+            || self.keep_latest_execution_logs_per_session > 20
+        {
+            return Err(ConfigError::ValidationError(
+                "Keep latest execution logs per session must be between 1 and 20".to_string(),
             ));
         }
 
@@ -458,6 +481,9 @@ impl Default for Config {
             cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
             execution_log_max_mb: default_execution_log_max_mb(),
             execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
+            cleanup_closed_task_intermediate_logs: default_cleanup_closed_task_intermediate_logs(),
+            keep_latest_execution_logs_per_session: default_keep_latest_execution_logs_per_session(
+            ),
             showcases: ShowcaseState::default(),
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
@@ -504,6 +530,8 @@ mod tests {
         assert!(config.cleanup_dropped_execution_logs);
         assert_eq!(config.execution_log_max_mb, 20);
         assert!(!config.execution_log_cleanup_on_startup);
+        assert!(config.cleanup_closed_task_intermediate_logs);
+        assert_eq!(config.keep_latest_execution_logs_per_session, 1);
     }
 
     #[test]
@@ -669,5 +697,17 @@ mod tests {
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("Execution log size cap"));
+    }
+
+    #[test]
+    fn rejects_invalid_keep_latest_execution_logs_per_session() {
+        let mut config = Config::default();
+        config.keep_latest_execution_logs_per_session = 0;
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Keep latest execution logs per session")
+        );
     }
 }

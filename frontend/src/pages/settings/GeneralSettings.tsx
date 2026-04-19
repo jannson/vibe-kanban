@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cloneDeep, merge, isEqual } from 'lodash';
+import { cloneDeep, mergeWith, isEqual } from 'lodash';
 import {
   Card,
   CardContent,
@@ -185,7 +185,13 @@ export function GeneralSettings() {
     (patch: Partial<typeof config>) => {
       setDraft((prev: typeof config) => {
         if (!prev) return prev;
-        const next = merge({}, prev, patch);
+        const next = mergeWith({}, prev, patch, (_objValue, srcValue) => {
+          if (Array.isArray(srcValue)) {
+            return srcValue;
+          }
+
+          return undefined;
+        });
         // Mark dirty if changed
         if (!isEqual(next, config)) {
           setDirty(true);
@@ -1696,6 +1702,62 @@ export function GeneralSettings() {
             </div>
           </div>
 
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="cleanup-closed-task-intermediate-logs"
+              checked={draft?.cleanup_closed_task_intermediate_logs ?? true}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ cleanup_closed_task_intermediate_logs: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label
+                htmlFor="cleanup-closed-task-intermediate-logs"
+                className="cursor-pointer"
+              >
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupClosedTaskIntermediate.label'
+                )}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'settings.general.maintenance.executionLogs.cleanupClosedTaskIntermediate.helper'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="keep-latest-execution-logs-per-session">
+              {t(
+                'settings.general.maintenance.executionLogs.keepLatestPerSession.label'
+              )}
+            </Label>
+            <Input
+              id="keep-latest-execution-logs-per-session"
+              type="number"
+              min={1}
+              max={20}
+              value={draft?.keep_latest_execution_logs_per_session ?? 1}
+              onChange={(e) =>
+                updateDraft({
+                  keep_latest_execution_logs_per_session: Math.min(
+                    20,
+                    Math.max(
+                      1,
+                      Number.parseInt(e.target.value || '1', 10) || 1
+                    )
+                  ),
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              {t(
+                'settings.general.maintenance.executionLogs.keepLatestPerSession.helper'
+              )}
+            </p>
+          </div>
+
           <div className="space-y-2 rounded-md border p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -1755,6 +1817,10 @@ export function GeneralSettings() {
                       droppedBytes: formatBytes(logCleanupResult.dropped_bytes),
                       retainedRows: logCleanupResult.retained_rows,
                       retainedBytes: formatBytes(logCleanupResult.retained_bytes),
+                      intermediateRows: logCleanupResult.intermediate_rows,
+                      intermediateBytes: formatBytes(
+                        logCleanupResult.intermediate_bytes
+                      ),
                     }
                   )}
                 </p>

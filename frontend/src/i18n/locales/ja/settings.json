@@ -275,6 +275,14 @@
             "label": "起動時にクリーンアップを実行",
             "helper": "安全なロールアウトのため既定では無効です。この環境で起動時クリーンアップ時間を許容できる場合のみ有効にしてください。"
           },
+          "cleanupClosedTaskIntermediate": {
+            "label": "完了済みタスクの中間実行ログを削除",
+            "helper": "done または cancelled のタスクでは、各セッションの最新 execution ログだけを残し、古い中間実行ログを削除します。"
+          },
+          "keepLatestPerSession": {
+            "label": "セッションごとに保持する最新 execution 数",
+            "helper": "完了済みタスクのクリーンアップ時、各セッションでこの件数分の最新 execution を残します。それ以前の execution ログは削除されます。"
+          },
           "cleanupDropped": {
             "label": "dropped 実行ログを削除",
             "helper": "復元や履歴トリミングで非表示になったログを即時削除します。"
@@ -286,7 +294,7 @@
             "button": "今すぐクリーンアップ",
             "running": "クリーンアップ中...",
             "result": "{{rows}} 行のログを削除しました（{{bytes}}）。",
-            "breakdown": "Dropped ログ: {{droppedRows}} 行（{{droppedBytes}}）。保持期間クリーンアップ: {{retainedRows}} 行（{{retainedBytes}}）。",
+            "breakdown": "Dropped ログ: {{droppedRows}} 行（{{droppedBytes}}）。保持期間クリーンアップ: {{retainedRows}} 行（{{retainedBytes}}）。完了済みタスクの中間ログ: {{intermediateRows}} 行（{{intermediateBytes}}）。",
             "storage": "DB ファイル: {{dbBefore}} → {{dbAfter}}。WAL: {{walBefore}} → {{walAfter}}。",
             "cleanupError": "実行ログのクリーンアップに失敗しました。"
           }

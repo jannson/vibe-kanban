@@ -27,6 +27,10 @@ export function KeyboardCommandsPlugin({
     const unregisterModifier = editor.registerCommand(
       KEY_MODIFIER_COMMAND,
       (event: KeyboardEvent) => {
+        if (event.isComposing) {
+          return false;
+        }
+
         if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') {
           return false;
         }
@@ -55,6 +59,7 @@ export function KeyboardCommandsPlugin({
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
+        if (event.isComposing) return false;
 
         if (!event.metaKey && !event.ctrlKey && !event.shiftKey && onEnter) {
           event.preventDefault();
