@@ -220,6 +220,7 @@ export function TaskFollowUpSection({
 
   // Local message state for immediate UI feedback (before debounced save)
   const [localMessage, setLocalMessage] = useState('');
+  const [hasPendingScratchSync, setHasPendingScratchSync] = useState(false);
 
   // Variant selection - derive default from latest process
   const latestProfileId = useMemo<ExecutorProfileId | null>(() => {
@@ -322,9 +323,26 @@ export function TaskFollowUpSection({
   // Sync local message from scratch when it loads (but not while user is typing)
   useEffect(() => {
     if (isScratchLoading) return;
+    const scratchMessage = scratchData?.message ?? '';
+
+    if (scratchMessage === localMessage) {
+      if (hasPendingScratchSync) {
+        setHasPendingScratchSync(false);
+      }
+      return;
+    }
+
     if (isTextareaFocused) return; // Don't overwrite while user is typing
-    setLocalMessage(scratchData?.message ?? '');
-  }, [isScratchLoading, scratchData?.message, isTextareaFocused]);
+    if (hasPendingScratchSync) return; // Don't overwrite unsaved local edits
+
+    setLocalMessage(scratchMessage);
+  }, [
+    isScratchLoading,
+    scratchData?.message,
+    isTextareaFocused,
+    localMessage,
+    hasPendingScratchSync,
+  ]);
 
   // During retry, follow-up box is greyed/disabled (not hidden)
   // Use RetryUi context so optimistic retry immediately disables this box
@@ -608,6 +626,7 @@ export function TaskFollowUpSection({
             const newMessage = base
               ? `${base}\n\n${imageMarkdown}`
               : imageMarkdown;
+            setHasPendingScratchSync(true);
             setLocalMessage(newMessage);
             setFollowUpMessageRef.current(newMessage);
           } else {
@@ -615,6 +634,7 @@ export function TaskFollowUpSection({
               const newMessage = prev
                 ? `${prev}\n\n${imageMarkdown}`
                 : imageMarkdown;
+              setHasPendingScratchSync(true);
               setFollowUpMessageRef.current(newMessage); // Debounced save to scratch
               return newMessage;
             });
@@ -629,6 +649,32 @@ export function TaskFollowUpSection({
 
   // Attachment button - file input ref and handlers
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  const focusFollowUpEditor = useCallback(() => {
+    requestAnimationFrame(() => {
+      const editor = editorContainerRef.current?.querySelector<HTMLElement>(
+        '[contenteditable="true"]'
+      );
+      if (!editor) {
+        return;
+      }
+
+      editor.focus({ preventScroll: true });
+
+      const selection = window.getSelection();
+      if (!selection) {
+        return;
+      }
+
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+  }, []);
+
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -654,17 +700,21 @@ export function TaskFollowUpSection({
       cancelQueueRef.current();
       const base = queuedMessageRef.current.data.message;
       const newMessage = appendQuickPhrase(base, phrase);
+      setHasPendingScratchSync(true);
       setLocalMessage(newMessage);
       setFollowUpMessageRef.current(newMessage);
+      focusFollowUpEditor();
       return;
     }
 
     setLocalMessage((prev) => {
       const newMessage = appendQuickPhrase(prev, phrase);
+      setHasPendingScratchSync(true);
       setFollowUpMessageRef.current(newMessage);
       return newMessage;
     });
-  }, []);
+    focusFollowUpEditor();
+  }, [focusFollowUpEditor]);
 
   // Stable onChange handler for WYSIWYGEditor
   const handleEditorChange = useCallback(
@@ -673,6 +723,7 @@ export function TaskFollowUpSection({
       if (isQueuedRef.current) {
         cancelQueueRef.current();
       }
+      setHasPendingScratchSync(true);
       setLocalMessage(value); // Immediate update for UI responsiveness
       setFollowUpMessageRef.current(value); // Debounced save to scratch
       if (followUpErrorRef.current) setFollowUpError(null);
@@ -774,6 +825,7 @@ export function TaskFollowUpSection({
             )}
 
             <div
+              ref={editorContainerRef}
               className="flex flex-col gap-2"
               onFocus={() => setIsTextareaFocused(true)}
               onBlur={(e) => {

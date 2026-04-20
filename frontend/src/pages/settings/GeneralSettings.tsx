@@ -83,6 +83,10 @@ export function GeneralSettings() {
   const [branchPrefixError, setBranchPrefixError] = useState<string | null>(
     null
   );
+  const [quickReplyPhrasesText, setQuickReplyPhrasesText] = useState('');
+  const [quickReplyRulePhrasesText, setQuickReplyRulePhrasesText] = useState<
+    string[]
+  >([]);
   const { setTheme } = useTheme();
 
   // Check editor availability when draft editor changes
@@ -112,10 +116,6 @@ export function GeneralSettings() {
     [t]
   );
 
-  const formatQuickReplyPhrases = useCallback((phrases: string[] = []) => {
-    return phrases.join('\n');
-  }, []);
-
   const parseQuickReplyPhrases = useCallback((value: string) => {
     const unique = new Set<string>();
 
@@ -129,10 +129,6 @@ export function GeneralSettings() {
         unique.add(phrase);
         return true;
       });
-  }, []);
-
-  const formatQuickReplyRulePhrases = useCallback((phrases: string[] = []) => {
-    return phrases.join(', ');
   }, []);
 
   const parseQuickReplyRulePhrases = useCallback((value: string) => {
@@ -171,6 +167,10 @@ export function GeneralSettings() {
     if (!config) return;
     if (!dirty) {
       setDraft(cloneDeep(config));
+      setQuickReplyPhrasesText(config.quick_reply_phrases.join('\n'));
+      setQuickReplyRulePhrasesText(
+        config.quick_reply_rules.map((rule) => rule.phrases.join(', '))
+      );
     }
   }, [config, dirty]);
 
@@ -184,7 +184,7 @@ export function GeneralSettings() {
   const updateDraft = useCallback(
     (patch: Partial<typeof config>) => {
       setDraft((prev: typeof config) => {
-        if (!prev) return prev;
+    if (!prev) return prev;
         const next = mergeWith({}, prev, patch, (_objValue, srcValue) => {
           if (Array.isArray(srcValue)) {
             return srcValue;
@@ -216,6 +216,7 @@ export function GeneralSettings() {
   );
 
   const addQuickReplyRule = useCallback(() => {
+    setQuickReplyRulePhrasesText((prev) => [...prev, '']);
     updateDraft({
       quick_reply_rules: [
         ...(draft?.quick_reply_rules ?? []),
@@ -226,6 +227,9 @@ export function GeneralSettings() {
 
   const removeQuickReplyRule = useCallback(
     (index: number) => {
+      setQuickReplyRulePhrasesText((prev) =>
+        prev.filter((_, ruleIndex) => ruleIndex !== index)
+      );
       updateDraft({
         quick_reply_rules: (draft?.quick_reply_rules ?? []).filter(
           (_, ruleIndex) => ruleIndex !== index
@@ -233,6 +237,32 @@ export function GeneralSettings() {
       });
     },
     [draft?.quick_reply_rules, updateDraft]
+  );
+
+  const syncQuickReplyPhrasesToDraft = useCallback(
+    (value: string) => {
+      const parsed = parseQuickReplyPhrases(value);
+      if (isEqual(parsed, draft?.quick_reply_phrases ?? [])) {
+        return;
+      }
+
+      updateDraft({ quick_reply_phrases: parsed });
+    },
+    [draft?.quick_reply_phrases, parseQuickReplyPhrases, updateDraft]
+  );
+
+  const syncQuickReplyRulePhrasesToDraft = useCallback(
+    (index: number, value: string) => {
+      const parsed = parseQuickReplyRulePhrases(value);
+      const current = draft?.quick_reply_rules?.[index]?.phrases ?? [];
+
+      if (isEqual(parsed, current)) {
+        return;
+      }
+
+      updateQuickReplyRule(index, { phrases: parsed });
+    },
+    [draft?.quick_reply_rules, parseQuickReplyRulePhrases, updateQuickReplyRule]
   );
 
   // Optional: warn on tab close/navigation with unsaved changes
@@ -264,8 +294,20 @@ export function GeneralSettings() {
     setSuccess(false);
 
     try {
-      await updateAndSaveConfig(draft); // Atomically apply + persist
-      setTheme(draft.theme);
+      const nextDraft = {
+        ...draft,
+        quick_reply_phrases: parseQuickReplyPhrases(quickReplyPhrasesText),
+        quick_reply_rules: (draft.quick_reply_rules ?? []).map((rule, index) => ({
+          ...rule,
+          phrases: parseQuickReplyRulePhrases(
+            quickReplyRulePhrasesText[index] ?? ''
+          ),
+        })),
+      };
+
+      setDraft(nextDraft);
+      await updateAndSaveConfig(nextDraft); // Atomically apply + persist
+      setTheme(nextDraft.theme);
       setDirty(false);
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -280,6 +322,10 @@ export function GeneralSettings() {
   const handleDiscard = () => {
     if (!config) return;
     setDraft(cloneDeep(config));
+    setQuickReplyPhrasesText(config.quick_reply_phrases.join('\n'));
+    setQuickReplyRulePhrasesText(
+      config.quick_reply_rules.map((rule) => rule.phrases.join(', '))
+    );
     setDirty(false);
   };
 
@@ -825,17 +871,14 @@ export function GeneralSettings() {
               placeholder={t(
                 'settings.general.git.quickReplies.phrases.placeholder'
               )}
-              value={formatQuickReplyPhrases(draft?.quick_reply_phrases ?? [])}
+              value={quickReplyPhrasesText}
               disabled={!(draft?.quick_reply_enabled ?? false)}
-              onChange={(e) =>
-                updateDraft({
-                  quick_reply_phrases: parseQuickReplyPhrases(e.target.value),
-                })
-              }
+              onChange={(e) => setQuickReplyPhrasesText(e.target.value)}
+              onBlur={(e) => syncQuickReplyPhrasesToDraft(e.target.value)}
             />
             <p className="text-sm text-muted-foreground">
               {t('settings.general.git.quickReplies.phrases.helper', {
-                count: draft?.quick_reply_phrases?.length ?? 0,
+                count: parseQuickReplyPhrases(quickReplyPhrasesText).length,
               })}
             </p>
           </div>
@@ -893,11 +936,17 @@ export function GeneralSettings() {
                         'settings.general.git.quickReplies.rules.phrasesPlaceholder'
                       )}
                       disabled={!(draft?.quick_reply_enabled ?? false)}
-                      value={formatQuickReplyRulePhrases(rule.phrases)}
-                      onChange={(e) =>
-                        updateQuickReplyRule(index, {
-                          phrases: parseQuickReplyRulePhrases(e.target.value),
-                        })
+                      value={quickReplyRulePhrasesText[index] ?? ''}
+                      onChange={(e) => {
+                        const nextText = e.target.value;
+                        setQuickReplyRulePhrasesText((prev) => {
+                          const next = [...prev];
+                          next[index] = nextText;
+                          return next;
+                        });
+                      }}
+                      onBlur={(e) =>
+                        syncQuickReplyRulePhrasesToDraft(index, e.target.value)
                       }
                     />
                   </div>
