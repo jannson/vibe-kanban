@@ -46,6 +46,7 @@ use services::services::{
     container::ContainerService,
     git::{ConflictOp, GitCliError, GitServiceError},
     github::GitHubService,
+    workspace_manager::WorkspaceManager,
 };
 use sqlx::{Error as SqlxError, SqlitePool};
 use ts_rs::TS;
@@ -859,6 +860,12 @@ pub(crate) async fn load_parent_task_for_workspace(
 
 pub(crate) fn is_closed_task_status(status: &TaskStatus) -> bool {
     matches!(status, TaskStatus::Done | TaskStatus::Cancelled)
+}
+
+fn infer_use_original_repos(container_ref: &str) -> bool {
+    let workspace_base = WorkspaceManager::get_workspace_base_dir();
+    let container_path = PathBuf::from(container_ref);
+    !container_path.starts_with(&workspace_base)
 }
 
 pub(crate) async fn validate_closed_task_resume_key(
@@ -1924,11 +1931,13 @@ pub async fn get_close_session_guard(
         .map(|wr| wr.target_branch.clone())
         .filter(|b| !b.is_empty());
 
-    let container_ref = deployment
-        .container()
-        .ensure_container_exists(&workspace)
-        .await?;
-    let workspace_path = PathBuf::from(container_ref);
+    let use_original_repos = match (workspace.use_original_repos, workspace.container_ref.as_deref()) {
+        (Some(value), _) => value,
+        (None, Some(container_ref)) => infer_use_original_repos(container_ref),
+        (None, None) => false,
+    };
+
+    let workspace_path = workspace.container_ref.as_ref().map(PathBuf::from);
 
     let mut has_merged_result = false;
     let mut still_on_task_branch = false;
@@ -1952,7 +1961,19 @@ pub async fn get_close_session_guard(
         }
 
         if target_branches.contains_key(&repo.id) {
-            let worktree_path = workspace_path.join(&repo.name);
+            let worktree_path = if use_original_repos {
+                repo.path.clone()
+            } else {
+                let Some(workspace_path) = workspace_path.as_ref() else {
+                    continue;
+                };
+                workspace_path.join(&repo.name)
+            };
+
+            if !worktree_path.exists() {
+                continue;
+            }
+
             if let Ok(head) = deployment.git().get_head_info(&worktree_path)
                 && head.branch == workspace.branch
             {
