@@ -19,7 +19,11 @@ import { useProject } from '@/contexts/ProjectContext';
 import { useTaskAttempts } from '@/hooks/useTaskAttempts';
 import { useTaskAttemptWithSession } from '@/hooks/useTaskAttempt';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { useBranchStatus, useAttemptExecution } from '@/hooks';
+import {
+  useBranchStatus,
+  useAttemptExecution,
+  useResumeTaskAttempt,
+} from '@/hooks';
 import { paths } from '@/lib/paths';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
 import { LogsCollapseProvider } from '@/contexts/LogsCollapseContext';
@@ -74,6 +78,7 @@ import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
 import { isSubtaskOriginalRepoNoGitMode } from '@/lib/gitMode';
 import { ConfirmDialog } from '@/components/dialogs/shared/ConfirmDialog';
+import { deriveTaskDetailCapabilities } from '@/features/task-details/state-machine';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -341,30 +346,37 @@ export function ProjectTasks() {
     attempt
   );
 
-  const requiresExplicitResume =
-    selectedTask?.status === 'done' || selectedTask?.status === 'cancelled';
-  const [isResumeUnlocked, setIsResumeUnlocked] = useState(false);
-  const [isResumeLoading, setIsResumeLoading] = useState(false);
+  const [resumedAttemptId, setResumedAttemptId] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const resumeMutation = useResumeTaskAttempt();
+
+  const rawMode = searchParams.get('view') as LayoutMode;
+  const mode: LayoutMode =
+    rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
 
   useEffect(() => {
-    setIsResumeUnlocked(false);
-    setIsResumeLoading(false);
+    setResumedAttemptId(null);
+    resumeMutation.reset();
     setResumeError(null);
-  }, [selectedTask?.id, attempt?.id]);
+  }, [selectedTask?.id, selectedTask?.status, attempt?.id]);
 
-  const isFollowUpEnabled = !requiresExplicitResume || isResumeUnlocked;
-  const shouldResumePreparedWorkspace =
-    requiresExplicitResume && isResumeUnlocked;
+  const hasExplicitResume = resumedAttemptId === attempt?.id;
+
+  const capabilities = deriveTaskDetailCapabilities({
+    taskStatus: selectedTask?.status ?? null,
+    hasAttempt: !!attempt,
+    requestedView: mode,
+    resumePending: resumeMutation.isPending,
+    resumeSucceeded: hasExplicitResume,
+  });
   const canLoadBranchStatus =
     !!attempt?.id &&
     !!selectedTask &&
     !isSubtaskOriginalNoGit &&
-    isFollowUpEnabled;
+    capabilities.canPollBranchStatus;
 
   const { data: branchStatus } = useBranchStatus(attempt?.id, {
     enabled: canLoadBranchStatus,
-    resume: shouldResumePreparedWorkspace,
   });
 
   const handleContinueCompletedTask = useCallback(async () => {
@@ -382,14 +394,13 @@ export function ProjectTasks() {
       return;
     }
 
-    setIsResumeLoading(true);
     setResumeError(null);
 
     try {
       if (!isSubtaskOriginalNoGit) {
-        await attemptsApi.getBranchStatus(attempt.id, { resume: true });
+        await resumeMutation.mutateAsync(attempt.id);
       }
-      setIsResumeUnlocked(true);
+      setResumedAttemptId(attempt.id);
     } catch (error) {
       const message =
         error instanceof ApiError
@@ -397,18 +408,12 @@ export function ProjectTasks() {
           : t('resumeTask.switchFailed');
       console.error('Failed to prepare completed task for follow-up:', error);
       setResumeError(message);
-    } finally {
-      setIsResumeLoading(false);
     }
-  }, [attempt?.id, isSubtaskOriginalNoGit, t]);
+  }, [attempt?.id, isSubtaskOriginalNoGit, resumeMutation, t]);
 
-  const rawMode = searchParams.get('view') as LayoutMode;
-  const mode: LayoutMode =
-    rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
-  const effectiveMode: LayoutMode =
-    selectedSharedTask || (requiresExplicitResume && !isResumeUnlocked)
-      ? null
-      : mode;
+  const effectiveMode: LayoutMode = selectedSharedTask
+    ? null
+    : capabilities.effectiveView;
 
   // TODO: Remove this redirect after v0.1.0 (legacy URL support for bookmarked links)
   // Migrates old `view=logs` to `view=diffs`
@@ -1134,9 +1139,8 @@ export function ProjectTasks() {
         <TaskAttemptPanel
           attempt={attempt}
           task={selectedTask}
-          gitEnabled={!isSubtaskOriginalNoGit && isFollowUpEnabled}
-          showFollowUp={isFollowUpEnabled}
-          resumeBranchStatus={shouldResumePreparedWorkspace}
+          gitEnabled={!isSubtaskOriginalNoGit && capabilities.canPrepareWorkspace}
+          showFollowUp={capabilities.canShowFollowUp}
         >
           {({ logs, followUp }) => (
             <>
@@ -1152,9 +1156,9 @@ export function ProjectTasks() {
 
                 <div className="min-h-0 max-h-[50%] border-t overflow-hidden bg-background">
                   <div className="mx-auto w-full max-w-[50rem] h-full min-h-0">
-                    {requiresExplicitResume && !isResumeUnlocked ? (
+                    {capabilities.shouldShowResumeCard ? (
                       <TaskResumeGuard
-                        loading={isResumeLoading}
+                        loading={resumeMutation.isPending}
                         error={resumeError}
                         onContinue={handleContinueCompletedTask}
                       />

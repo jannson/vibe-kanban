@@ -236,6 +236,8 @@ export type OpenEditorRequest = { editor_type: string | null, file_path: string 
 
 export type OpenEditorResponse = { url: string | null, };
 
+export type ResumeTaskAttemptResponse = { workspace_id: string, task_id: string, task_status: TaskStatus, branch_status: Array<RepoBranchStatus>, };
+
 export type AssignSharedTaskRequest = { new_assignee_user_id: string | null, };
 
 export type ShareTaskResponse = { shared_task_id: string, };

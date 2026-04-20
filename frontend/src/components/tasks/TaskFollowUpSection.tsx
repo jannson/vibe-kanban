@@ -144,14 +144,12 @@ interface TaskFollowUpSectionProps {
   task: TaskWithAttemptStatus;
   session?: Session;
   gitEnabled?: boolean;
-  resumeBranchStatus?: boolean;
 }
 
 export function TaskFollowUpSection({
   task,
   session,
   gitEnabled = true,
-  resumeBranchStatus = false,
 }: TaskFollowUpSectionProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
@@ -164,10 +162,7 @@ export function TaskFollowUpSection({
     useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
-    useBranchStatus(workspaceId, {
-      enabled: gitEnabled,
-      resume: resumeBranchStatus,
-    });
+    useBranchStatus(workspaceId, { enabled: gitEnabled });
 
   const repoWithConflicts = useMemo(
     () =>

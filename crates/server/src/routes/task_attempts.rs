@@ -344,6 +344,12 @@ pub async fn stream_task_attempt_diff_ws(
         "diff stream requested"
     );
 
+    if let Some(task) = parent_task.as_ref()
+        && let Err(error) = reject_closed_task_workspace_prepare(task, "streaming diffs")
+    {
+        return error.into_response();
+    }
+
     let _ = Workspace::touch(&deployment.db().pool, workspace.id).await;
 
     let stats_only = params.stats_only;
@@ -711,6 +717,10 @@ pub async fn open_task_attempt_in_editor(
         "open editor requested"
     );
 
+    if let Some(task) = parent_task.as_ref() {
+        reject_closed_task_workspace_prepare(task, "opening the editor")?;
+    }
+
     let container_ref = deployment
         .container()
         .ensure_container_exists(&workspace)
@@ -805,61 +815,49 @@ pub struct RepoBranchStatus {
     pub status: BranchStatus,
 }
 
+#[derive(Debug, Serialize, TS)]
+pub struct ResumeTaskAttemptResponse {
+    pub workspace_id: Uuid,
+    pub task_id: Uuid,
+    pub task_status: TaskStatus,
+    pub branch_status: Vec<RepoBranchStatus>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct BranchStatusQuery {
     pub resume: Option<bool>,
 }
 
-pub async fn get_task_attempt_branch_status(
-    Extension(workspace): Extension<Workspace>,
-    Query(query): Query<BranchStatusQuery>,
-    State(deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<Vec<RepoBranchStatus>>>, ApiError> {
+async fn load_parent_task_for_workspace(
+    pool: &SqlitePool,
+    workspace: &Workspace,
+) -> Result<Task, ApiError> {
+    workspace
+        .parent_task(pool)
+        .await?
+        .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))
+}
+
+fn is_closed_task_status(status: &TaskStatus) -> bool {
+    matches!(status, TaskStatus::Done | TaskStatus::Cancelled)
+}
+
+fn reject_closed_task_workspace_prepare(task: &Task, action: &str) -> Result<(), ApiError> {
+    if is_closed_task_status(&task.status) {
+        return Err(ApiError::Conflict(format!(
+            "This completed task must be explicitly resumed before {}.",
+            action
+        )));
+    }
+
+    Ok(())
+}
+
+async fn build_repo_branch_status(
+    deployment: &DeploymentImpl,
+    workspace: &Workspace,
+) -> Result<Vec<RepoBranchStatus>, ApiError> {
     let pool = &deployment.db().pool;
-    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
-        return Ok(ResponseJson(ApiResponse::success(Vec::new())));
-    }
-
-    let parent_task = workspace.parent_task(pool).await?;
-    let task_status = parent_task.as_ref().map(|task| task.status.clone());
-    let requires_explicit_resume = task_status
-        .as_ref()
-        .map(|status| matches!(status, TaskStatus::Done | TaskStatus::Cancelled))
-        .unwrap_or(false);
-    let resume_requested = query.resume.unwrap_or(false);
-
-    tracing::info!(
-        workspace_id = %workspace.id,
-        branch = %workspace.branch,
-        task_id = ?parent_task.as_ref().map(|task| task.id),
-        task_status = ?task_status,
-        resume_requested,
-        "branch status requested"
-    );
-
-    if requires_explicit_resume && !resume_requested {
-        tracing::warn!(
-            workspace_id = %workspace.id,
-            branch = %workspace.branch,
-            task_id = ?parent_task.as_ref().map(|task| task.id),
-            task_status = ?task_status,
-            "rejecting branch status request for completed task without explicit resume"
-        );
-        return Err(ApiError::Conflict(
-            "This completed task must be explicitly resumed before preparing its branch."
-                .to_string(),
-        ));
-    }
-
-    tracing::info!(
-        workspace_id = %workspace.id,
-        branch = %workspace.branch,
-        task_id = ?parent_task.as_ref().map(|task| task.id),
-        task_status = ?task_status,
-        resume_requested,
-        "preparing workspace for branch status request"
-    );
-
     let repositories = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
     let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
     let target_branches: HashMap<_, _> = workspace_repos
@@ -869,7 +867,7 @@ pub async fn get_task_attempt_branch_status(
 
     let container_ref = deployment
         .container()
-        .ensure_container_exists(&workspace)
+        .ensure_container_exists(workspace)
         .await?;
     let workspace_dir = PathBuf::from(&container_ref);
 
@@ -881,7 +879,6 @@ pub async fn get_task_attempt_branch_status(
         };
 
         let repo_merges = Merge::find_by_workspace_and_repo_id(pool, workspace.id, repo.id).await?;
-
         let worktree_path = workspace_dir.join(&repo.name);
 
         let head_oid = deployment
@@ -981,6 +978,98 @@ pub async fn get_task_attempt_branch_status(
             },
         });
     }
+
+    Ok(results)
+}
+
+pub async fn resume_task_attempt(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<ResumeTaskAttemptResponse>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Err(ApiError::BadRequest(
+            "Git operations are disabled for this subtask attempt".to_string(),
+        ));
+    }
+
+    let task = load_parent_task_for_workspace(pool, &workspace).await?;
+
+    if !is_closed_task_status(&task.status) {
+        return Err(ApiError::BadRequest(
+            "Only completed or cancelled tasks can be resumed".to_string(),
+        ));
+    }
+
+    tracing::info!(
+        workspace_id = %workspace.id,
+        branch = %workspace.branch,
+        task_id = %task.id,
+        task_status = ?task.status,
+        "resume task attempt requested"
+    );
+
+    Task::update_status(pool, task.id, TaskStatus::InProgress).await?;
+
+    let branch_status = build_repo_branch_status(&deployment, &workspace).await?;
+
+    Ok(ResponseJson(ApiResponse::success(ResumeTaskAttemptResponse {
+        workspace_id: workspace.id,
+        task_id: task.id,
+        task_status: TaskStatus::InProgress,
+        branch_status,
+    })))
+}
+
+pub async fn get_task_attempt_branch_status(
+    Extension(workspace): Extension<Workspace>,
+    Query(query): Query<BranchStatusQuery>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<Vec<RepoBranchStatus>>>, ApiError> {
+    let pool = &deployment.db().pool;
+    if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
+        return Ok(ResponseJson(ApiResponse::success(Vec::new())));
+    }
+
+    let task = load_parent_task_for_workspace(pool, &workspace).await?;
+    let task_status = task.status.clone();
+    let requires_explicit_resume = is_closed_task_status(&task_status);
+    let resume_requested = query.resume.unwrap_or(false);
+
+    tracing::info!(
+        workspace_id = %workspace.id,
+        branch = %workspace.branch,
+        task_id = %task.id,
+        task_status = ?task_status,
+        resume_requested,
+        "branch status requested"
+    );
+
+    if requires_explicit_resume && !resume_requested {
+        tracing::warn!(
+            workspace_id = %workspace.id,
+            branch = %workspace.branch,
+            task_id = %task.id,
+            task_status = ?task_status,
+            "rejecting branch status request for completed task without explicit resume"
+        );
+        return Err(ApiError::Conflict(
+            "This completed task must be explicitly resumed before preparing its branch."
+                .to_string(),
+        ));
+    }
+
+    tracing::info!(
+        workspace_id = %workspace.id,
+        branch = %workspace.branch,
+        task_id = %task.id,
+        task_status = ?task_status,
+        resume_requested,
+        "preparing workspace for branch status request"
+    );
+
+    let results = build_repo_branch_status(&deployment, &workspace).await?;
 
     Ok(ResponseJson(ApiResponse::success(results)))
 }
@@ -1890,6 +1979,7 @@ pub async fn switch_to_target_branch_before_close(
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_attempt_id_router = Router::new()
         .route("/", get(get_task_attempt))
+        .route("/resume", post(resume_task_attempt))
         .route("/run-agent-setup", post(run_agent_setup))
         .route("/gh-cli-setup", post(gh_cli_setup_handler))
         .route("/start-dev-server", post(start_dev_server))

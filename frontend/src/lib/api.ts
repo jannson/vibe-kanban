@@ -91,6 +91,7 @@ import {
   MergeTaskAttemptRequest,
   PushTaskAttemptRequest,
   RepoBranchStatus,
+  ResumeTaskAttemptResponse,
   AbortConflictsRequest,
   Session,
   Workspace,
@@ -608,6 +609,15 @@ export const attemptsApi = {
       `/api/task-attempts/${attemptId}/branch-status${suffix ? `?${suffix}` : ''}`
     );
     return handleApiResponse<RepoBranchStatus[]>(response);
+  },
+
+  resumeTaskAttempt: async (
+    attemptId: string
+  ): Promise<ResumeTaskAttemptResponse> => {
+    const response = await makeRequest(`/api/task-attempts/${attemptId}/resume`, {
+      method: 'POST',
+    });
+    return handleApiResponse<ResumeTaskAttemptResponse>(response);
   },
 
   getRepos: async (attemptId: string): Promise<RepoWithTargetBranch[]> => {
