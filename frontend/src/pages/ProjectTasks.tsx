@@ -354,9 +354,14 @@ export function ProjectTasks() {
   }, [selectedTask?.id, attempt?.id]);
 
   const isFollowUpEnabled = !requiresExplicitResume || isResumeUnlocked;
+  const canLoadBranchStatus =
+    !!attempt?.id &&
+    !!selectedTask &&
+    !isSubtaskOriginalNoGit &&
+    isFollowUpEnabled;
 
   const { data: branchStatus } = useBranchStatus(attempt?.id, {
-    enabled: !isSubtaskOriginalNoGit && isFollowUpEnabled,
+    enabled: canLoadBranchStatus,
   });
 
   const handleContinueCompletedTask = useCallback(async () => {

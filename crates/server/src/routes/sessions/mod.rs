@@ -109,6 +109,19 @@ pub async fn follow_up(
             "Workspace not found".to_string(),
         )))?;
 
+    let parent_task = workspace.parent_task(pool).await?;
+    let task_status = parent_task.as_ref().map(|task| task.status.clone());
+
+    tracing::info!(
+        workspace_id = %workspace.id,
+        session_id = %session.id,
+        branch = %workspace.branch,
+        task_id = ?parent_task.as_ref().map(|task| task.id),
+        task_status = ?task_status,
+        variant = ?payload.variant,
+        "follow-up requested"
+    );
+
     tracing::info!("{:?}", workspace);
 
     deployment
