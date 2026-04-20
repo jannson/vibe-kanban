@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
 
 use async_trait::async_trait;
 use db::DBService;
@@ -56,6 +56,7 @@ pub struct LocalDeployment {
     remote_client: Result<RemoteClient, RemoteClientNotConfigured>,
     auth_context: AuthContext,
     oauth_handoffs: Arc<RwLock<HashMap<Uuid, PendingHandoff>>>,
+    task_resume_keys: Arc<RwLock<HashMap<String, PendingTaskResume>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +64,15 @@ struct PendingHandoff {
     provider: String,
     app_verifier: String,
 }
+
+#[derive(Debug, Clone)]
+struct PendingTaskResume {
+    workspace_id: Uuid,
+    task_id: Uuid,
+    expires_at: Instant,
+}
+
+const TASK_RESUME_KEY_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[async_trait]
 impl Deployment for LocalDeployment {
@@ -165,6 +175,7 @@ impl Deployment for LocalDeployment {
             .map_err(|e| *e);
 
         let oauth_handoffs = Arc::new(RwLock::new(HashMap::new()));
+        let task_resume_keys = Arc::new(RwLock::new(HashMap::new()));
 
         // We need to make analytics accessible to the ContainerService
         // TODO: Handle this more gracefully
@@ -209,6 +220,7 @@ impl Deployment for LocalDeployment {
             remote_client,
             auth_context,
             oauth_handoffs,
+            task_resume_keys,
         };
 
         Ok(deployment)
@@ -339,5 +351,37 @@ impl LocalDeployment {
 
     pub fn share_config(&self) -> Option<&ShareConfig> {
         self.share_config.as_ref()
+    }
+
+    pub async fn issue_task_resume_key(&self, workspace_id: Uuid, task_id: Uuid) -> String {
+        let key = Uuid::new_v4().to_string();
+        let expires_at = Instant::now() + TASK_RESUME_KEY_TTL;
+
+        self.task_resume_keys.write().await.insert(
+            key.clone(),
+            PendingTaskResume {
+                workspace_id,
+                task_id,
+                expires_at,
+            },
+        );
+
+        key
+    }
+
+    pub async fn validate_task_resume_key(
+        &self,
+        workspace_id: Uuid,
+        task_id: Uuid,
+        key: &str,
+    ) -> bool {
+        let mut resumes = self.task_resume_keys.write().await;
+        let now = Instant::now();
+        resumes.retain(|_, pending| pending.expires_at > now);
+
+        resumes
+            .get(key)
+            .map(|pending| pending.workspace_id == workspace_id && pending.task_id == task_id)
+            .unwrap_or(false)
     }
 }

@@ -597,11 +597,11 @@ export const attemptsApi = {
 
   getBranchStatus: async (
     attemptId: string,
-    options?: { resume?: boolean }
+    options?: { resumeKey?: string }
   ): Promise<RepoBranchStatus[]> => {
     const params = new URLSearchParams();
-    if (options?.resume) {
-      params.set('resume', 'true');
+    if (options?.resumeKey) {
+      params.set('resume_key', options.resumeKey);
     }
 
     const suffix = params.toString();

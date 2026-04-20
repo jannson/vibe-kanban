@@ -1,9 +1,13 @@
 import { useDiffStream } from '@/hooks/useDiffStream';
 import { useMemo } from 'react';
 
-export function useDiffSummary(attemptId: string | null) {
+export function useDiffSummary(
+  attemptId: string | null,
+  resumeKey?: string | null
+) {
   const { diffs, error } = useDiffStream(attemptId, true, {
     statsOnly: true,
+    resumeKey,
   });
 
   const { fileCount, added, deleted } = useMemo(() => {

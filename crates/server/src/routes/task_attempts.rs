@@ -86,6 +86,7 @@ pub struct TaskAttemptQuery {
 pub struct DiffStreamQuery {
     #[serde(default)]
     pub stats_only: bool,
+    pub resume_key: Option<String>,
 }
 
 pub async fn get_task_attempts(
@@ -341,13 +342,22 @@ pub async fn stream_task_attempt_diff_ws(
         task_id = ?parent_task.as_ref().map(|task| task.id),
         task_status = ?task_status,
         stats_only = params.stats_only,
+        resume_key_present = params.resume_key.is_some(),
         "diff stream requested"
     );
 
-    if let Some(task) = parent_task.as_ref()
-        && let Err(error) = reject_closed_task_workspace_prepare(task, "streaming diffs")
-    {
-        return error.into_response();
+    if let Some(task) = parent_task.as_ref() {
+        if let Err(error) = validate_closed_task_resume_key(
+            &deployment,
+            &workspace,
+            task,
+            params.resume_key.as_deref(),
+            "streaming diffs",
+        )
+        .await
+        {
+            return error.into_response();
+        }
     }
 
     let _ = Workspace::touch(&deployment.db().pool, workspace.id).await;
@@ -692,6 +702,7 @@ pub enum PushError {
 pub struct OpenEditorRequest {
     editor_type: Option<String>,
     file_path: Option<String>,
+    resume_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -714,11 +725,19 @@ pub async fn open_task_attempt_in_editor(
         task_status = ?task_status,
         editor_type = ?payload.editor_type,
         file_path = ?payload.file_path,
+        resume_key_present = payload.resume_key.is_some(),
         "open editor requested"
     );
 
     if let Some(task) = parent_task.as_ref() {
-        reject_closed_task_workspace_prepare(task, "opening the editor")?;
+        validate_closed_task_resume_key(
+            &deployment,
+            &workspace,
+            task,
+            payload.resume_key.as_deref(),
+            "opening the editor",
+        )
+        .await?;
     }
 
     let container_ref = deployment
@@ -820,15 +839,15 @@ pub struct ResumeTaskAttemptResponse {
     pub workspace_id: Uuid,
     pub task_id: Uuid,
     pub task_status: TaskStatus,
-    pub branch_status: Vec<RepoBranchStatus>,
+    pub resume_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct BranchStatusQuery {
-    pub resume: Option<bool>,
+    pub resume_key: Option<String>,
 }
 
-async fn load_parent_task_for_workspace(
+pub(crate) async fn load_parent_task_for_workspace(
     pool: &SqlitePool,
     workspace: &Workspace,
 ) -> Result<Task, ApiError> {
@@ -838,19 +857,40 @@ async fn load_parent_task_for_workspace(
         .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))
 }
 
-fn is_closed_task_status(status: &TaskStatus) -> bool {
+pub(crate) fn is_closed_task_status(status: &TaskStatus) -> bool {
     matches!(status, TaskStatus::Done | TaskStatus::Cancelled)
 }
 
-fn reject_closed_task_workspace_prepare(task: &Task, action: &str) -> Result<(), ApiError> {
-    if is_closed_task_status(&task.status) {
+pub(crate) async fn validate_closed_task_resume_key(
+    deployment: &DeploymentImpl,
+    workspace: &Workspace,
+    task: &Task,
+    resume_key: Option<&str>,
+    action: &str,
+) -> Result<(), ApiError> {
+    if !is_closed_task_status(&task.status) {
+        return Ok(());
+    }
+
+    let Some(resume_key) = resume_key else {
         return Err(ApiError::Conflict(format!(
             "This completed task must be explicitly resumed before {}.",
             action
         )));
-    }
+    };
 
-    Ok(())
+    let is_valid = deployment
+        .validate_task_resume_key(workspace.id, task.id, resume_key)
+        .await;
+
+    if is_valid {
+        Ok(())
+    } else {
+        Err(ApiError::Conflict(format!(
+            "This completed task must be explicitly resumed before {}.",
+            action
+        )))
+    }
 }
 
 async fn build_repo_branch_status(
@@ -1010,15 +1050,13 @@ pub async fn resume_task_attempt(
         "resume task attempt requested"
     );
 
-    Task::update_status(pool, task.id, TaskStatus::InProgress).await?;
-
-    let branch_status = build_repo_branch_status(&deployment, &workspace).await?;
+    let resume_key = deployment.issue_task_resume_key(workspace.id, task.id).await;
 
     Ok(ResponseJson(ApiResponse::success(ResumeTaskAttemptResponse {
         workspace_id: workspace.id,
         task_id: task.id,
-        task_status: TaskStatus::InProgress,
-        branch_status,
+        task_status: task.status,
+        resume_key,
     })))
 }
 
@@ -1034,30 +1072,35 @@ pub async fn get_task_attempt_branch_status(
 
     let task = load_parent_task_for_workspace(pool, &workspace).await?;
     let task_status = task.status.clone();
-    let requires_explicit_resume = is_closed_task_status(&task_status);
-    let resume_requested = query.resume.unwrap_or(false);
+    let resume_key_present = query.resume_key.is_some();
 
     tracing::info!(
         workspace_id = %workspace.id,
         branch = %workspace.branch,
         task_id = %task.id,
         task_status = ?task_status,
-        resume_requested,
+        resume_key_present,
         "branch status requested"
     );
 
-    if requires_explicit_resume && !resume_requested {
+    if let Err(error) = validate_closed_task_resume_key(
+        &deployment,
+        &workspace,
+        &task,
+        query.resume_key.as_deref(),
+        "checking branch status",
+    )
+    .await
+    {
         tracing::warn!(
             workspace_id = %workspace.id,
             branch = %workspace.branch,
             task_id = %task.id,
             task_status = ?task_status,
-            "rejecting branch status request for completed task without explicit resume"
+            resume_key_present,
+            "rejecting branch status request for completed task without valid resume key"
         );
-        return Err(ApiError::Conflict(
-            "This completed task must be explicitly resumed before preparing its branch."
-                .to_string(),
-        ));
+        return Err(error);
     }
 
     tracing::info!(
@@ -1065,7 +1108,7 @@ pub async fn get_task_attempt_branch_status(
         branch = %workspace.branch,
         task_id = %task.id,
         task_status = ?task_status,
-        resume_requested,
+        resume_key_present,
         "preparing workspace for branch status request"
     );
 

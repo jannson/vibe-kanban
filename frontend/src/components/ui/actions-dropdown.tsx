@@ -34,16 +34,18 @@ interface ActionsDropdownProps {
   task?: TaskWithAttemptStatus | null;
   attempt?: Workspace | null;
   sharedTask?: SharedTaskRecord;
+  resumeKey?: string | null;
 }
 
 export function ActionsDropdown({
   task,
   attempt,
   sharedTask,
+  resumeKey = null,
 }: ActionsDropdownProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
-  const openInEditor = useOpenInEditor(attempt?.id);
+  const openInEditor = useOpenInEditor(attempt?.id, undefined, resumeKey);
   const navigate = useNavigate();
   const { userId, isSignedIn } = useAuth();
   const logsCollapse = useLogsCollapse();

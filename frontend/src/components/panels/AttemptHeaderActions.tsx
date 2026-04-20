@@ -22,6 +22,7 @@ interface AttemptHeaderActionsProps {
   task: TaskWithAttemptStatus;
   attempt?: Workspace | null;
   sharedTask?: SharedTaskRecord;
+  resumeKey?: string | null;
 }
 
 export const AttemptHeaderActions = ({
@@ -31,6 +32,7 @@ export const AttemptHeaderActions = ({
   task,
   attempt,
   sharedTask,
+  resumeKey = null,
 }: AttemptHeaderActionsProps) => {
   const { t } = useTranslation('tasks');
   const posthog = usePostHog();
@@ -108,7 +110,12 @@ export const AttemptHeaderActions = ({
       {typeof mode !== 'undefined' && onModeChange && (
         <div className="h-4 w-px bg-border" />
       )}
-      <ActionsDropdown task={task} attempt={attempt} sharedTask={sharedTask} />
+      <ActionsDropdown
+        task={task}
+        attempt={attempt}
+        sharedTask={sharedTask}
+        resumeKey={resumeKey}
+      />
       <Button variant="icon" aria-label="Close" onClick={onClose}>
         <X size={16} />
       </Button>

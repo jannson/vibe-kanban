@@ -10,7 +10,8 @@ type OpenEditorOptions = {
 
 export function useOpenInEditor(
   attemptId?: string,
-  onShowEditorDialog?: () => void
+  onShowEditorDialog?: () => void,
+  resumeKey?: string | null
 ) {
   return useCallback(
     async (options?: OpenEditorOptions): Promise<void> => {
@@ -22,6 +23,7 @@ export function useOpenInEditor(
         const response = await attemptsApi.openEditor(attemptId, {
           editor_type: editorType ?? null,
           file_path: filePath ?? null,
+          resume_key: resumeKey ?? null,
         });
 
         // If a URL is returned, open it in a new window/tab
@@ -42,6 +44,6 @@ export function useOpenInEditor(
         }
       }
     },
-    [attemptId, onShowEditorDialog]
+    [attemptId, onShowEditorDialog, resumeKey]
   );
 }

@@ -3,11 +3,14 @@ import { attemptsApi } from '@/lib/api';
 
 export function useBranchStatus(
   attemptId?: string,
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; resumeKey?: string | null }
 ) {
   return useQuery({
-    queryKey: ['branchStatus', attemptId],
-    queryFn: () => attemptsApi.getBranchStatus(attemptId!),
+    queryKey: ['branchStatus', attemptId, options?.resumeKey ?? null],
+    queryFn: () =>
+      attemptsApi.getBranchStatus(attemptId!, {
+        resumeKey: options?.resumeKey ?? undefined,
+      }),
     enabled: !!attemptId && (options?.enabled ?? true),
     refetchInterval: 5000,
   });

@@ -12,6 +12,7 @@ type DiffStreamEvent = {
 
 export interface UseDiffStreamOptions {
   statsOnly?: boolean;
+  resumeKey?: string | null;
 }
 
 interface UseDiffStreamResult {
@@ -27,9 +28,17 @@ export const useDiffStream = (
   const endpoint = (() => {
     if (!attemptId) return undefined;
     const query = `/api/task-attempts/${attemptId}/diff/ws`;
-    if (typeof options?.statsOnly === 'boolean') {
+    if (
+      typeof options?.statsOnly === 'boolean' ||
+      typeof options?.resumeKey === 'string'
+    ) {
       const params = new URLSearchParams();
-      params.set('stats_only', String(options.statsOnly));
+      if (typeof options?.statsOnly === 'boolean') {
+        params.set('stats_only', String(options.statsOnly));
+      }
+      if (options?.resumeKey) {
+        params.set('resume_key', options.resumeKey);
+      }
       return `${query}?${params.toString()}`;
     } else {
       return query;

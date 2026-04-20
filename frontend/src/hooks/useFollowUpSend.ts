@@ -4,6 +4,7 @@ import type { CreateFollowUpAttempt } from 'shared/types';
 
 type Args = {
   sessionId?: string;
+  resumeKey?: string | null;
   message: string;
   conflictMarkdown: string | null;
   reviewMarkdown: string;
@@ -16,6 +17,7 @@ type Args = {
 
 export function useFollowUpSend({
   sessionId,
+  resumeKey,
   message,
   conflictMarkdown,
   reviewMarkdown,
@@ -49,6 +51,7 @@ export function useFollowUpSend({
         retry_process_id: null,
         force_when_dirty: null,
         perform_git_reset: null,
+        resume_key: resumeKey ?? null,
       };
       await sessionsApi.followUp(sessionId, body);
       clearComments();
@@ -65,6 +68,7 @@ export function useFollowUpSend({
     }
   }, [
     sessionId,
+    resumeKey,
     message,
     conflictMarkdown,
     reviewMarkdown,

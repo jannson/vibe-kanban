@@ -41,6 +41,7 @@ type Props = {
   expanded: boolean;
   onToggle: () => void;
   selectedAttempt: Workspace | null;
+  resumeKey?: string | null;
 };
 
 function labelAndIcon(diff: Diff) {
@@ -79,6 +80,7 @@ export default function DiffCard({
   expanded,
   onToggle,
   selectedAttempt,
+  resumeKey = null,
 }: Props) {
   const { config } = useUserSystem();
   const theme = getActualTheme(config?.theme);
@@ -251,6 +253,7 @@ export default function DiffCard({
       const response = await attemptsApi.openEditor(selectedAttempt.id, {
         editor_type: null,
         file_path: openPath ?? null,
+        resume_key: resumeKey,
       });
 
       // If a URL is returned, open it in a new window/tab

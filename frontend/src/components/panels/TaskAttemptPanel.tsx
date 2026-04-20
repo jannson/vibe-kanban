@@ -11,6 +11,7 @@ interface TaskAttemptPanelProps {
   task: TaskWithAttemptStatus | null;
   gitEnabled?: boolean;
   showFollowUp?: boolean;
+  resumeKey?: string | null;
   children: (sections: { logs: ReactNode; followUp: ReactNode }) => ReactNode;
 }
 
@@ -19,6 +20,7 @@ const TaskAttemptPanel = ({
   task,
   gitEnabled = true,
   showFollowUp = true,
+  resumeKey = null,
   children,
 }: TaskAttemptPanelProps) => {
   if (!attempt) {
@@ -41,6 +43,7 @@ const TaskAttemptPanel = ({
               task={task}
               session={attempt.session}
               gitEnabled={gitEnabled}
+              resumeKey={resumeKey}
             />
           ) : null,
         })}

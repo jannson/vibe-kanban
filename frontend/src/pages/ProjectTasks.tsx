@@ -159,10 +159,12 @@ function DiffsPanelContainer({
   attempt,
   selectedTask,
   branchStatus,
+  resumeKey,
 }: {
   attempt: Workspace | null;
   selectedTask: TaskWithAttemptStatus | null;
   branchStatus: RepoBranchStatus[] | null;
+  resumeKey?: string | null;
 }) {
   const { isAttemptRunning } = useAttemptExecution(attempt?.id);
   const gitEnabled = !isSubtaskOriginalRepoNoGitMode(selectedTask, attempt);
@@ -171,6 +173,7 @@ function DiffsPanelContainer({
     <DiffsPanel
       key={attempt?.id}
       selectedAttempt={attempt}
+      resumeKey={resumeKey}
       gitOps={
         attempt && selectedTask && gitEnabled
           ? {
@@ -346,7 +349,7 @@ export function ProjectTasks() {
     attempt
   );
 
-  const [resumedAttemptId, setResumedAttemptId] = useState<string | null>(null);
+  const [resumeKey, setResumeKey] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const resumeMutation = useResumeTaskAttempt();
 
@@ -355,19 +358,17 @@ export function ProjectTasks() {
     rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
 
   useEffect(() => {
-    setResumedAttemptId(null);
+    setResumeKey(null);
     resumeMutation.reset();
     setResumeError(null);
   }, [selectedTask?.id, selectedTask?.status, attempt?.id]);
-
-  const hasExplicitResume = resumedAttemptId === attempt?.id;
 
   const capabilities = deriveTaskDetailCapabilities({
     taskStatus: selectedTask?.status ?? null,
     hasAttempt: !!attempt,
     requestedView: mode,
     resumePending: resumeMutation.isPending,
-    resumeSucceeded: hasExplicitResume,
+    resumeSucceeded: !!resumeKey,
   });
   const canLoadBranchStatus =
     !!attempt?.id &&
@@ -377,6 +378,7 @@ export function ProjectTasks() {
 
   const { data: branchStatus } = useBranchStatus(attempt?.id, {
     enabled: canLoadBranchStatus,
+    resumeKey,
   });
 
   const handleContinueCompletedTask = useCallback(async () => {
@@ -398,9 +400,9 @@ export function ProjectTasks() {
 
     try {
       if (!isSubtaskOriginalNoGit) {
-        await resumeMutation.mutateAsync(attempt.id);
+        const result = await resumeMutation.mutateAsync(attempt.id);
+        setResumeKey(result.resume_key);
       }
-      setResumedAttemptId(attempt.id);
     } catch (error) {
       const message =
         error instanceof ApiError
@@ -1059,6 +1061,7 @@ export function ProjectTasks() {
             task={selectedTask}
             sharedTask={getSharedTask(selectedTask)}
             attempt={attempt ?? null}
+            resumeKey={resumeKey}
             onClose={() => void handleCloseAttemptPanel()}
           />
         )
@@ -1141,6 +1144,7 @@ export function ProjectTasks() {
           task={selectedTask}
           gitEnabled={!isSubtaskOriginalNoGit && capabilities.canPrepareWorkspace}
           showFollowUp={capabilities.canShowFollowUp}
+          resumeKey={resumeKey}
         >
           {({ logs, followUp }) => (
             <>
@@ -1188,6 +1192,7 @@ export function ProjectTasks() {
             attempt={attempt}
             selectedTask={selectedTask}
             branchStatus={branchStatus ?? null}
+            resumeKey={resumeKey}
           />
         )}
       </div>

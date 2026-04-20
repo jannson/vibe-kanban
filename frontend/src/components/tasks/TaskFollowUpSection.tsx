@@ -144,12 +144,14 @@ interface TaskFollowUpSectionProps {
   task: TaskWithAttemptStatus;
   session?: Session;
   gitEnabled?: boolean;
+  resumeKey?: string | null;
 }
 
 export function TaskFollowUpSection({
   task,
   session,
   gitEnabled = true,
+  resumeKey = null,
 }: TaskFollowUpSectionProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
@@ -162,7 +164,7 @@ export function TaskFollowUpSection({
     useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
-    useBranchStatus(workspaceId, { enabled: gitEnabled });
+    useBranchStatus(workspaceId, { enabled: gitEnabled, resumeKey });
 
   const repoWithConflicts = useMemo(
     () =>
@@ -449,6 +451,7 @@ export function TaskFollowUpSection({
   const { isSendingFollowUp, followUpError, setFollowUpError, onSendFollowUp } =
     useFollowUpSend({
       sessionId,
+      resumeKey,
       message: localMessage,
       conflictMarkdown: conflictResolutionInstructions,
       reviewMarkdown,
@@ -796,6 +799,7 @@ export function TaskFollowUpSection({
             {branchStatus && (
               <FollowUpConflictSection
                 workspaceId={workspaceId}
+                resumeKey={resumeKey}
                 attemptBranch={attemptBranch}
                 branchStatus={branchStatus}
                 isEditable={isEditable}

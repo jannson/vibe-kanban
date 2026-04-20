@@ -6,6 +6,7 @@ import type { RepoBranchStatus } from 'shared/types';
 
 type Props = {
   workspaceId?: string;
+  resumeKey?: string | null;
   attemptBranch: string | null;
   branchStatus: RepoBranchStatus[] | undefined;
   isEditable: boolean;
@@ -17,6 +18,7 @@ type Props = {
 
 export function FollowUpConflictSection({
   workspaceId,
+  resumeKey,
   attemptBranch,
   branchStatus,
   onResolve,
@@ -28,7 +30,7 @@ export function FollowUpConflictSection({
     (r) => r.is_rebase_in_progress || (r.conflicted_files?.length ?? 0) > 0
   );
   const op = repoWithConflicts?.conflict_op ?? null;
-  const openInEditor = useOpenInEditor(workspaceId);
+  const openInEditor = useOpenInEditor(workspaceId, undefined, resumeKey);
   const repoId = repoWithConflicts?.repo_id;
   const { abortConflicts } = useAttemptConflicts(workspaceId, repoId);
 

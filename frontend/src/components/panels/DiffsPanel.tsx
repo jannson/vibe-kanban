@@ -23,6 +23,7 @@ import GitOperations, {
 interface DiffsPanelProps {
   selectedAttempt: Workspace | null;
   gitOps?: GitOperationsInputs;
+  resumeKey?: string | null;
 }
 
 type DiffCollapseDefaults = Record<DiffChangeKind, boolean>;
@@ -48,16 +49,23 @@ const exceedsMaxLineCount = (d: Diff, maxLines: number): boolean => {
 const getDiffId = ({ diff, index }: { diff: Diff; index: number }) =>
   `${diff.newPath || diff.oldPath || index}`;
 
-export function DiffsPanel({ selectedAttempt, gitOps }: DiffsPanelProps) {
+export function DiffsPanel({
+  selectedAttempt,
+  gitOps,
+  resumeKey = null,
+}: DiffsPanelProps) {
   const { t } = useTranslation('tasks');
   const [loadingState, setLoadingState] = useState<
     'loading' | 'loaded' | 'timed-out'
   >('loading');
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
-  const { diffs, error } = useDiffStream(selectedAttempt?.id ?? null, true);
+  const { diffs, error } = useDiffStream(selectedAttempt?.id ?? null, true, {
+    resumeKey,
+  });
   const { fileCount, added, deleted } = useDiffSummary(
-    selectedAttempt?.id ?? null
+    selectedAttempt?.id ?? null,
+    resumeKey
   );
 
   // If no diffs arrive within 3 seconds, stop showing the spinner
@@ -154,6 +162,7 @@ interface DiffsPanelContentProps {
   toggle: (id: string) => void;
   selectedAttempt: Workspace | null;
   gitOps?: GitOperationsInputs;
+  resumeKey?: string | null;
   loading: boolean;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
@@ -169,6 +178,7 @@ function DiffsPanelContent({
   toggle,
   selectedAttempt,
   gitOps,
+  resumeKey = null,
   loading,
   t,
 }: DiffsPanelContentProps) {
@@ -250,6 +260,7 @@ function DiffsPanelContent({
                 expanded={!collapsedIds.has(id)}
                 onToggle={() => toggle(id)}
                 selectedAttempt={selectedAttempt}
+                resumeKey={resumeKey}
               />
             );
           })

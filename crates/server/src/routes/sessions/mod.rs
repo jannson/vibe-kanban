@@ -31,7 +31,10 @@ use uuid::Uuid;
 
 use crate::{
     DeploymentImpl, error::ApiError, middleware::load_session_middleware,
-    routes::task_attempts::util::restore_worktrees_to_process,
+    routes::task_attempts::{
+        is_closed_task_status, util::restore_worktrees_to_process,
+        validate_closed_task_resume_key,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +96,7 @@ pub struct CreateFollowUpAttempt {
     pub retry_process_id: Option<Uuid>,
     pub force_when_dirty: Option<bool>,
     pub perform_git_reset: Option<bool>,
+    pub resume_key: Option<String>,
 }
 
 pub async fn follow_up(
@@ -119,10 +123,22 @@ pub async fn follow_up(
         task_id = ?parent_task.as_ref().map(|task| task.id),
         task_status = ?task_status,
         variant = ?payload.variant,
+        resume_key_present = payload.resume_key.is_some(),
         "follow-up requested"
     );
 
-    tracing::info!("{:?}", workspace);
+    if let Some(task) = parent_task.as_ref()
+        && is_closed_task_status(&task.status)
+    {
+        validate_closed_task_resume_key(
+            &deployment,
+            &workspace,
+            task,
+            payload.resume_key.as_deref(),
+            "sending a follow-up",
+        )
+        .await?;
+    }
 
     deployment
         .container()

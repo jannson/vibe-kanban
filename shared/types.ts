@@ -216,7 +216,7 @@ export type CheckAgentAvailabilityQuery = { executor: BaseCodingAgent, };
 
 export type CurrentUserResponse = { user_id: string, };
 
-export type CreateFollowUpAttempt = { prompt: string, variant: string | null, retry_process_id: string | null, force_when_dirty: boolean | null, perform_git_reset: boolean | null, };
+export type CreateFollowUpAttempt = { prompt: string, variant: string | null, retry_process_id: string | null, force_when_dirty: boolean | null, perform_git_reset: boolean | null, resume_key: string | null, };
 
 export type ChangeTargetBranchRequest = { repo_id: string, new_target_branch: string, };
 
@@ -232,11 +232,11 @@ export type RenameBranchRequest = { new_branch_name: string, };
 
 export type RenameBranchResponse = { branch: string, };
 
-export type OpenEditorRequest = { editor_type: string | null, file_path: string | null, };
+export type OpenEditorRequest = { editor_type: string | null, file_path: string | null, resume_key: string | null, };
 
 export type OpenEditorResponse = { url: string | null, };
 
-export type ResumeTaskAttemptResponse = { workspace_id: string, task_id: string, task_status: TaskStatus, branch_status: Array<RepoBranchStatus>, };
+export type ResumeTaskAttemptResponse = { workspace_id: string, task_id: string, task_status: TaskStatus, resume_key: string, };
 
 export type AssignSharedTaskRequest = { new_assignee_user_id: string | null, };
 
