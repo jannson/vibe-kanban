@@ -10,6 +10,7 @@ interface TaskAttemptPanelProps {
   attempt: WorkspaceWithSession | undefined;
   task: TaskWithAttemptStatus | null;
   gitEnabled?: boolean;
+  showFollowUp?: boolean;
   children: (sections: { logs: ReactNode; followUp: ReactNode }) => ReactNode;
 }
 
@@ -17,6 +18,7 @@ const TaskAttemptPanel = ({
   attempt,
   task,
   gitEnabled = true,
+  showFollowUp = true,
   children,
 }: TaskAttemptPanelProps) => {
   if (!attempt) {
@@ -34,13 +36,13 @@ const TaskAttemptPanel = ({
           logs: (
             <VirtualizedList key={attempt.id} attempt={attempt} task={task} />
           ),
-          followUp: (
+          followUp: showFollowUp ? (
             <TaskFollowUpSection
               task={task}
               session={attempt.session}
               gitEnabled={gitEnabled}
             />
-          ),
+          ) : null,
         })}
       </RetryUiProvider>
     </EntriesProvider>

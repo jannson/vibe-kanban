@@ -379,7 +379,7 @@ export function ProjectTasks() {
 
     try {
       if (!isSubtaskOriginalNoGit) {
-        await attemptsApi.getBranchStatus(attempt.id);
+        await attemptsApi.getBranchStatus(attempt.id, { resume: true });
       }
       setIsResumeUnlocked(true);
     } catch (error) {
@@ -1122,7 +1122,8 @@ export function ProjectTasks() {
         <TaskAttemptPanel
           attempt={attempt}
           task={selectedTask}
-          gitEnabled={!isSubtaskOriginalNoGit}
+          gitEnabled={!isSubtaskOriginalNoGit && isFollowUpEnabled}
+          showFollowUp={isFollowUpEnabled}
         >
           {({ logs, followUp }) => (
             <>

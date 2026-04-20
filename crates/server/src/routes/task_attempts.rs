@@ -780,13 +780,32 @@ pub struct RepoBranchStatus {
     pub status: BranchStatus,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct BranchStatusQuery {
+    pub resume: Option<bool>,
+}
+
 pub async fn get_task_attempt_branch_status(
     Extension(workspace): Extension<Workspace>,
+    Query(query): Query<BranchStatusQuery>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<RepoBranchStatus>>>, ApiError> {
     let pool = &deployment.db().pool;
     if is_subtask_original_repo_no_git_mode(pool, &workspace).await? {
         return Ok(ResponseJson(ApiResponse::success(Vec::new())));
+    }
+
+    let requires_explicit_resume = workspace
+        .parent_task(pool)
+        .await?
+        .map(|task| matches!(task.status, TaskStatus::Done | TaskStatus::Cancelled))
+        .unwrap_or(false);
+
+    if requires_explicit_resume && !query.resume.unwrap_or(false) {
+        return Err(ApiError::Conflict(
+            "This completed task must be explicitly resumed before preparing its branch."
+                .to_string(),
+        ));
     }
 
     let repositories = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;

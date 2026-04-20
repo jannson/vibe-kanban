@@ -594,9 +594,18 @@ export const attemptsApi = {
     return handleApiResponse<OpenEditorResponse>(response);
   },
 
-  getBranchStatus: async (attemptId: string): Promise<RepoBranchStatus[]> => {
+  getBranchStatus: async (
+    attemptId: string,
+    options?: { resume?: boolean }
+  ): Promise<RepoBranchStatus[]> => {
+    const params = new URLSearchParams();
+    if (options?.resume) {
+      params.set('resume', 'true');
+    }
+
+    const suffix = params.toString();
     const response = await makeRequest(
-      `/api/task-attempts/${attemptId}/branch-status`
+      `/api/task-attempts/${attemptId}/branch-status${suffix ? `?${suffix}` : ''}`
     );
     return handleApiResponse<RepoBranchStatus[]>(response);
   },
