@@ -354,6 +354,8 @@ export function ProjectTasks() {
   }, [selectedTask?.id, attempt?.id]);
 
   const isFollowUpEnabled = !requiresExplicitResume || isResumeUnlocked;
+  const shouldResumePreparedWorkspace =
+    requiresExplicitResume && isResumeUnlocked;
   const canLoadBranchStatus =
     !!attempt?.id &&
     !!selectedTask &&
@@ -362,6 +364,7 @@ export function ProjectTasks() {
 
   const { data: branchStatus } = useBranchStatus(attempt?.id, {
     enabled: canLoadBranchStatus,
+    resume: shouldResumePreparedWorkspace,
   });
 
   const handleContinueCompletedTask = useCallback(async () => {
@@ -402,6 +405,10 @@ export function ProjectTasks() {
   const rawMode = searchParams.get('view') as LayoutMode;
   const mode: LayoutMode =
     rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
+  const effectiveMode: LayoutMode =
+    selectedSharedTask || (requiresExplicitResume && !isResumeUnlocked)
+      ? null
+      : mode;
 
   // TODO: Remove this redirect after v0.1.0 (legacy URL support for bookmarked links)
   // Migrates old `view=logs` to `view=diffs`
@@ -1042,7 +1049,7 @@ export function ProjectTasks() {
           />
         ) : (
           <AttemptHeaderActions
-            mode={mode}
+            mode={effectiveMode}
             onModeChange={setMode}
             task={selectedTask}
             sharedTask={getSharedTask(selectedTask)}
@@ -1129,6 +1136,7 @@ export function ProjectTasks() {
           task={selectedTask}
           gitEnabled={!isSubtaskOriginalNoGit && isFollowUpEnabled}
           showFollowUp={isFollowUpEnabled}
+          resumeBranchStatus={shouldResumePreparedWorkspace}
         >
           {({ logs, followUp }) => (
             <>
@@ -1170,8 +1178,8 @@ export function ProjectTasks() {
   const auxContent =
     selectedTask && attempt ? (
       <div className="relative h-full w-full">
-        {mode === 'preview' && <PreviewPanel />}
-        {mode === 'diffs' && (
+        {effectiveMode === 'preview' && <PreviewPanel />}
+        {effectiveMode === 'diffs' && (
           <DiffsPanelContainer
             attempt={attempt}
             selectedTask={selectedTask}
@@ -1182,8 +1190,6 @@ export function ProjectTasks() {
     ) : (
       <div className="relative h-full w-full" />
     );
-
-  const effectiveMode: LayoutMode = selectedSharedTask ? null : mode;
 
   const attemptArea = (
     <GitOperationsProvider attemptId={attempt?.id}>
