@@ -153,11 +153,9 @@ export const useJsonPatchWsStream = <T extends object>(
 
             const current = dataRef.current;
             if (!filtered.length || !current) return;
-            // Deep clone the current state before mutating it
-            const next = structuredClone(current);
+            applyPatch(current, filtered);
 
-            // Apply patch (mutates the clone in place)
-            applyPatch(next, filtered);
+            const next = refreshPatchedState(current, filtered);
 
             dataRef.current = next;
             setData(next);
@@ -246,3 +244,30 @@ export const useJsonPatchWsStream = <T extends object>(
 
   return { data, isConnected, error };
 };
+
+function refreshPatchedState<T extends object>(
+  current: T,
+  patches: Operation[]
+): T {
+  const next = { ...current } as T;
+  const nextRecord = next as Record<string, unknown>;
+  const touchedTopLevelKeys = new Set<string>();
+
+  for (const patch of patches) {
+    const topLevelKey = patch.path.split('/').filter(Boolean)[0];
+    if (topLevelKey) {
+      touchedTopLevelKeys.add(topLevelKey);
+    }
+  }
+
+  for (const key of touchedTopLevelKeys) {
+    const value = nextRecord[key];
+    if (Array.isArray(value)) {
+      nextRecord[key] = [...value];
+    } else if (value && typeof value === 'object') {
+      nextRecord[key] = { ...(value as Record<string, unknown>) };
+    }
+  }
+
+  return next;
+}

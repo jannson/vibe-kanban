@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use axum::response::sse::Event;
@@ -15,7 +18,7 @@ const HISTORY_BYTES: usize = 100000 * 1024;
 
 #[derive(Clone)]
 struct StoredMsg {
-    msg: LogMsg,
+    msg: Arc<LogMsg>,
     bytes: usize,
 }
 
@@ -24,9 +27,17 @@ struct Inner {
     total_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MsgStoreStats {
+    pub history_len: usize,
+    pub total_bytes: usize,
+    pub retain_raw_history: bool,
+}
+
 pub struct MsgStore {
     inner: RwLock<Inner>,
     sender: broadcast::Sender<LogMsg>,
+    retain_raw_history: AtomicBool,
 }
 
 impl Default for MsgStore {
@@ -44,12 +55,20 @@ impl MsgStore {
                 total_bytes: 0,
             }),
             sender,
+            retain_raw_history: AtomicBool::new(true),
         }
     }
 
     pub fn push(&self, msg: LogMsg) {
         let _ = self.sender.send(msg.clone()); // live listeners
+        if matches!(msg, LogMsg::Stdout(_) | LogMsg::Stderr(_))
+            && !self.retain_raw_history.load(Ordering::Relaxed)
+        {
+            return;
+        }
+
         let bytes = msg.approx_bytes();
+        let msg = Arc::new(msg);
 
         let mut inner = self.inner.write().unwrap();
         while inner.total_bytes.saturating_add(bytes) > HISTORY_BYTES {
@@ -61,6 +80,20 @@ impl MsgStore {
         }
         inner.history.push_back(StoredMsg { msg, bytes });
         inner.total_bytes = inner.total_bytes.saturating_add(bytes);
+
+        let memory_trace_enabled = std::env::var("VIBE_KANBAN_LOG_MEMORY_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if memory_trace_enabled && inner.total_bytes >= (HISTORY_BYTES * 9 / 10) {
+            tracing::warn!(
+                target: "history",
+                history_len = inner.history.len(),
+                total_bytes = inner.total_bytes,
+                retain_raw_history = self.retain_raw_history.load(Ordering::Relaxed),
+                history_limit_bytes = HISTORY_BYTES,
+                "MsgStore history is approaching its in-memory limit"
+            );
+        }
     }
 
     // Convenience
@@ -83,8 +116,25 @@ impl MsgStore {
         self.push(LogMsg::Finished);
     }
 
+    pub fn disable_raw_history_retention(&self) {
+        self.retain_raw_history.store(false, Ordering::Relaxed);
+    }
+
+    pub fn enable_raw_history_retention(&self) {
+        self.retain_raw_history.store(true, Ordering::Relaxed);
+    }
+
     pub fn get_receiver(&self) -> broadcast::Receiver<LogMsg> {
         self.sender.subscribe()
+    }
+
+    pub fn stats(&self) -> MsgStoreStats {
+        let inner = self.inner.read().unwrap();
+        MsgStoreStats {
+            history_len: inner.history.len(),
+            total_bytes: inner.total_bytes,
+            retain_raw_history: self.retain_raw_history.load(Ordering::Relaxed),
+        }
     }
 
     pub fn get_history(&self) -> Vec<LogMsg> {
@@ -93,7 +143,17 @@ impl MsgStore {
             .unwrap()
             .history
             .iter()
-            .map(|s| s.msg.clone())
+            .map(|s| (*s.msg).clone())
+            .collect()
+    }
+
+    fn get_history_refs(&self) -> Vec<Arc<LogMsg>> {
+        self.inner
+            .read()
+            .unwrap()
+            .history
+            .iter()
+            .map(|s| Arc::clone(&s.msg))
             .collect()
     }
 
@@ -101,9 +161,13 @@ impl MsgStore {
     pub fn history_plus_stream(
         &self,
     ) -> futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>> {
-        let (history, rx) = (self.get_history(), self.get_receiver());
+        let (history, rx) = (self.get_history_refs(), self.get_receiver());
 
-        let hist = futures::stream::iter(history.into_iter().map(Ok::<_, std::io::Error>));
+        let hist = futures::stream::iter(
+            history
+                .into_iter()
+                .map(|msg| Ok::<_, std::io::Error>((*msg).clone())),
+        );
         let live = BroadcastStream::new(rx)
             .filter_map(|res| async move { res.ok().map(Ok::<_, std::io::Error>) });
 
@@ -173,5 +237,63 @@ impl MsgStore {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MsgStore;
+    use crate::log_msg::LogMsg;
+
+    #[test]
+    fn disabling_raw_history_retention_stops_storing_new_raw_logs() {
+        let store = MsgStore::new();
+        store.push_stdout("before");
+
+        store.disable_raw_history_retention();
+        store.push_stdout("after-stdout");
+        store.push_stderr("after-stderr");
+        store.push(LogMsg::SessionId("session-1".to_string()));
+        store.push_finished();
+
+        let history = store.get_history();
+
+        assert!(history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content == "before"
+        )));
+        assert!(!history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content == "after-stdout"
+        )));
+        assert!(!history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stderr(content) if content == "after-stderr"
+        )));
+        assert!(history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::SessionId(content) if content == "session-1"
+        )));
+        assert!(history.iter().any(|msg| matches!(msg, LogMsg::Finished)));
+    }
+
+    #[test]
+    fn re_enabling_raw_history_retention_resumes_storage() {
+        let store = MsgStore::new();
+        store.disable_raw_history_retention();
+        store.push_stdout("skipped");
+
+        store.enable_raw_history_retention();
+        store.push_stdout("stored-again");
+
+        let history = store.get_history();
+        assert!(!history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content == "skipped"
+        )));
+        assert!(history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content == "stored-again"
+        )));
     }
 }

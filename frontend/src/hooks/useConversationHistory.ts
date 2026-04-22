@@ -127,6 +127,12 @@ export const useConversationHistory = ({
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
   const truncatedHistoricProcessIdsRef = useRef<Set<string>>(new Set());
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
+  const emitFrameRef = useRef<number | null>(null);
+  const pendingEmitRef = useRef<{
+    executionProcessState: ExecutionProcessStateStore;
+    addEntryType: AddEntryType;
+    loading: boolean;
+  } | null>(null);
   const [hasMoreHistoric, setHasMoreHistoric] = useState(false);
   const [isLoadingHistoric, setIsLoadingHistoric] = useState(false);
 
@@ -270,9 +276,9 @@ export const useConversationHistory = ({
     };
   };
 
-  const flattenEntries = (
+  const countFlattenedEntries = (
     executionProcessState: ExecutionProcessStateStore
-  ): PatchTypeWithKey[] => {
+  ): number => {
     return Object.values(executionProcessState)
       .filter(
         (p) =>
@@ -281,14 +287,7 @@ export const useConversationHistory = ({
           p.executionProcess.executor_action.typ.type ===
             'CodingAgentInitialRequest'
       )
-      .sort(
-        (a, b) =>
-          new Date(
-            a.executionProcess.created_at as unknown as string
-          ).getTime() -
-          new Date(b.executionProcess.created_at as unknown as string).getTime()
-      )
-      .flatMap((p) => p.entries);
+      .reduce((total, processState) => total + processState.entries.length, 0);
   };
 
   const getActiveAgentProcesses = (): ExecutionProcess[] => {
@@ -527,6 +526,46 @@ export const useConversationHistory = ({
     [flattenEntriesForEmit]
   );
 
+  const flushPendingEmit = useCallback(() => {
+    if (emitFrameRef.current !== null) {
+      window.cancelAnimationFrame(emitFrameRef.current);
+      emitFrameRef.current = null;
+    }
+
+    if (!pendingEmitRef.current) {
+      return;
+    }
+
+    const { executionProcessState, addEntryType, loading } =
+      pendingEmitRef.current;
+    pendingEmitRef.current = null;
+    emitEntries(executionProcessState, addEntryType, loading);
+  }, [emitEntries]);
+
+  const scheduleEmitEntries = useCallback(
+    (
+      executionProcessState: ExecutionProcessStateStore,
+      addEntryType: AddEntryType,
+      loading: boolean
+    ) => {
+      pendingEmitRef.current = {
+        executionProcessState,
+        addEntryType,
+        loading,
+      };
+
+      if (emitFrameRef.current !== null) {
+        return;
+      }
+
+      emitFrameRef.current = window.requestAnimationFrame(() => {
+        emitFrameRef.current = null;
+        flushPendingEmit();
+      });
+    },
+    [flushPendingEmit]
+  );
+
   // This emits its own events as they are streamed
   const loadRunningAndEmit = useCallback(
     (executionProcess: ExecutionProcess): Promise<void> => {
@@ -548,9 +587,14 @@ export const useConversationHistory = ({
                 entries: patchesWithKey,
               };
             });
-            emitEntries(displayedExecutionProcesses.current, 'running', false);
+            scheduleEmitEntries(
+              displayedExecutionProcesses.current,
+              'running',
+              false
+            );
           },
           onFinished: () => {
+            flushPendingEmit();
             emitEntries(displayedExecutionProcesses.current, 'running', false);
             controller.close();
             resolve();
@@ -634,7 +678,7 @@ export const useConversationHistory = ({
           loadedCodingAgentProcesses >=
             INITIAL_HISTORIC_MAX_CODING_AGENT_PROCESSES ||
           loadedEntries >= INITIAL_HISTORIC_MAX_ENTRIES ||
-          flattenEntries(localDisplayedExecutionProcesses).length >
+          countFlattenedEntries(localDisplayedExecutionProcesses) >
             MIN_INITIAL_ENTRIES
         ) {
           break;
@@ -676,7 +720,7 @@ export const useConversationHistory = ({
         truncatedHistoricProcessIdsRef.current.delete(executionProcess.id);
 
         if (
-          flattenEntries(displayedExecutionProcesses.current).length > batchSize
+          countFlattenedEntries(displayedExecutionProcesses.current) > batchSize
         ) {
           anyUpdated = true;
           break;
@@ -806,7 +850,7 @@ export const useConversationHistory = ({
             ? 'running'
             : 'initial';
         ensureProcessVisible(activeProcess);
-        emitEntries(
+        scheduleEmitEntries(
           displayedExecutionProcesses.current,
           runningOrInitial,
           false
@@ -826,9 +870,9 @@ export const useConversationHistory = ({
   }, [
     attempt.id,
     idStatusKey,
-    emitEntries,
     ensureProcessVisible,
     loadRunningAndEmitWithBackoff,
+    scheduleEmitEntries,
   ]);
 
   // If an execution process is removed, remove it from the state
@@ -861,6 +905,11 @@ export const useConversationHistory = ({
     loadedInitialEntries.current = false;
     streamingProcessIdsRef.current.clear();
     truncatedHistoricProcessIdsRef.current.clear();
+    if (emitFrameRef.current !== null) {
+      window.cancelAnimationFrame(emitFrameRef.current);
+      emitFrameRef.current = null;
+    }
+    pendingEmitRef.current = null;
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
     setHasMoreHistoric(false);
     setIsLoadingHistoric(false);
@@ -870,12 +919,14 @@ export const useConversationHistory = ({
     if (isLoadingHistoric) return false;
     setIsLoadingHistoric(true);
     const updated = await loadRemainingEntriesInBatches(REMAINING_BATCH_SIZE);
+    flushPendingEmit();
     emitEntries(displayedExecutionProcesses.current, 'historic', false);
     updateHasMoreHistoric();
     setIsLoadingHistoric(false);
     return updated;
   }, [
     emitEntries,
+    flushPendingEmit,
     isLoadingHistoric,
     loadRemainingEntriesInBatches,
     updateHasMoreHistoric,

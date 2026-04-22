@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -59,6 +59,113 @@ use crate::services::{
 pub type ContainerRef = String;
 
 const EXECUTION_LOG_CAP_REACHED_MESSAGE: &str = "Execution log storage limit reached; further stdout/stderr for this run is no longer persisted to the database.";
+fn serialize_log_message_line(msg: &LogMsg) -> Result<String, serde_json::Error> {
+    serde_json::to_string(msg).map(|json| format!("{json}\n"))
+}
+
+struct RawLogPersistenceLimiter {
+    max_persisted_bytes: u64,
+    prefix_budget_bytes: u64,
+    persisted_prefix_bytes: u64,
+    tail_budget_bytes: u64,
+    buffered_tail_bytes: u64,
+    buffered_tail_lines: VecDeque<String>,
+    truncation_line: String,
+    log_cap_reached: bool,
+}
+
+impl RawLogPersistenceLimiter {
+    fn with_tail_budget_bytes(max_persisted_bytes: u64, tail_budget_max_bytes: u64) -> Self {
+        let truncation_line = serialize_log_message_line(&LogMsg::Stderr(
+            EXECUTION_LOG_CAP_REACHED_MESSAGE.to_string(),
+        ))
+        .expect("truncation marker should serialize");
+        let truncation_line_bytes = truncation_line.len() as u64;
+        let available_bytes = max_persisted_bytes.saturating_sub(truncation_line_bytes);
+        let tail_budget_bytes = if max_persisted_bytes == 0 {
+            0
+        } else {
+            (available_bytes / 4).min(tail_budget_max_bytes)
+        };
+
+        Self {
+            max_persisted_bytes,
+            prefix_budget_bytes: available_bytes.saturating_sub(tail_budget_bytes),
+            persisted_prefix_bytes: 0,
+            tail_budget_bytes,
+            buffered_tail_bytes: 0,
+            buffered_tail_lines: VecDeque::new(),
+            truncation_line,
+            log_cap_reached: false,
+        }
+    }
+
+    fn ingest(&mut self, msg: &LogMsg) -> Result<Vec<String>, serde_json::Error> {
+        if !matches!(msg, LogMsg::Stdout(_) | LogMsg::Stderr(_)) {
+            return Ok(Vec::new());
+        }
+
+        let jsonl_line_with_newline = serialize_log_message_line(msg)?;
+        let line_bytes = jsonl_line_with_newline.len() as u64;
+
+        if self.max_persisted_bytes == 0 {
+            return Ok(vec![jsonl_line_with_newline]);
+        }
+
+        if self.log_cap_reached {
+            self.buffer_tail_line(jsonl_line_with_newline, line_bytes);
+            return Ok(Vec::new());
+        }
+
+        if self.persisted_prefix_bytes.saturating_add(line_bytes) > self.prefix_budget_bytes
+        {
+            self.log_cap_reached = true;
+            self.buffer_tail_line(jsonl_line_with_newline, line_bytes);
+            return Ok(vec![self.truncation_line.clone()]);
+        }
+
+        self.persisted_prefix_bytes = self.persisted_prefix_bytes.saturating_add(line_bytes);
+        Ok(vec![jsonl_line_with_newline])
+    }
+
+    fn buffer_tail_line(&mut self, line: String, line_bytes: u64) {
+        if self.tail_budget_bytes == 0 {
+            return;
+        }
+
+        if line_bytes > self.tail_budget_bytes {
+            self.buffered_tail_lines.clear();
+            self.buffered_tail_bytes = 0;
+            self.buffered_tail_lines.push_back(line);
+            self.buffered_tail_bytes = line_bytes;
+            return;
+        }
+
+        while self.buffered_tail_bytes.saturating_add(line_bytes) > self.tail_budget_bytes {
+            if let Some(removed) = self.buffered_tail_lines.pop_front() {
+                self.buffered_tail_bytes =
+                    self.buffered_tail_bytes.saturating_sub(removed.len() as u64);
+            } else {
+                break;
+            }
+        }
+
+        self.buffered_tail_lines.push_back(line);
+        self.buffered_tail_bytes = self.buffered_tail_bytes.saturating_add(line_bytes);
+    }
+
+    fn finish(self) -> Vec<String> {
+        if !self.log_cap_reached {
+            return Vec::new();
+        }
+
+        self.buffered_tail_lines.into_iter().collect()
+    }
+
+    fn cap_reached(&self) -> bool {
+        self.log_cap_reached
+    }
+}
 
 fn raw_messages_to_json_patch_stream(
     raw_messages: Vec<LogMsg>,
@@ -655,6 +762,8 @@ pub trait ContainerService {
 
     async fn execution_log_max_bytes(&self) -> u64;
 
+    async fn execution_log_tail_bytes(&self) -> u64;
+
     async fn git_branch_from_workspace(&self, workspace_id: &Uuid, task_title: &str) -> String {
         let task_title_id = git_branch_id(task_title);
         let prefix = self.git_branch_prefix().await;
@@ -938,6 +1047,7 @@ pub trait ContainerService {
         let msg_stores = self.msg_stores().clone();
         let db = self.db().clone();
         let max_persisted_bytes = self.execution_log_max_bytes().await;
+        let tail_persisted_bytes = self.execution_log_tail_bytes().await;
 
         tokio::spawn(async move {
             // Get the message store for this execution
@@ -948,84 +1058,59 @@ pub trait ContainerService {
 
             if let Some(store) = store {
                 let mut stream = store.history_plus_stream();
-                let mut persisted_bytes = 0_u64;
-                let mut log_cap_reached = false;
+                let mut persistence_limiter = RawLogPersistenceLimiter::with_tail_budget_bytes(
+                    max_persisted_bytes,
+                    tail_persisted_bytes,
+                );
+                let memory_trace_enabled = std::env::var("VIBE_KANBAN_LOG_MEMORY_TRACE")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
 
                 while let Some(Ok(msg)) = stream.next().await {
                     match &msg {
                         LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
-                            if log_cap_reached {
-                                continue;
-                            }
-
-                            // Serialize this individual message as a JSONL line
-                            match serde_json::to_string(&msg) {
-                                Ok(jsonl_line) => {
-                                    let jsonl_line_with_newline = format!("{jsonl_line}\n");
-                                    let line_bytes = jsonl_line_with_newline.len() as u64;
-
-                                    if max_persisted_bytes > 0
-                                        && persisted_bytes.saturating_add(line_bytes)
-                                            > max_persisted_bytes
-                                    {
-                                        let truncation_message = LogMsg::Stderr(
-                                            EXECUTION_LOG_CAP_REACHED_MESSAGE.to_string(),
-                                        );
-
-                                        match serde_json::to_string(&truncation_message) {
-                                            Ok(truncation_line) => {
-                                                let truncation_line_with_newline =
-                                                    format!("{truncation_line}\n");
-
-                                                if let Err(e) =
-                                                    ExecutionProcessLogs::append_log_line(
-                                                        &db.pool,
-                                                        execution_id,
-                                                        &truncation_line_with_newline,
-                                                    )
-                                                    .await
-                                                {
-                                                    tracing::error!(
-                                                        "Failed to append truncation marker for execution {}: {}",
-                                                        execution_id,
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::error!(
-                                                    "Failed to serialize truncation marker for execution {}: {}",
-                                                    execution_id,
-                                                    e
-                                                );
-                                            }
+                            let cap_was_reached = persistence_limiter.cap_reached();
+                            match persistence_limiter.ingest(&msg) {
+                                Ok(lines) => {
+                                    if !cap_was_reached && persistence_limiter.cap_reached() {
+                                        store.disable_raw_history_retention();
+                                        if memory_trace_enabled {
+                                            let stats = store.stats();
+                                            tracing::warn!(
+                                                target: "history",
+                                                execution_id = %execution_id,
+                                                history_len = stats.history_len,
+                                                total_bytes = stats.total_bytes,
+                                                retain_raw_history = stats.retain_raw_history,
+                                                tail_persisted_bytes,
+                                                max_persisted_bytes,
+                                                "Disabled raw history retention after execution log cap was reached"
+                                            );
                                         }
+                                    }
 
-                                        log_cap_reached = true;
+                                    for line in lines {
+                                        if let Err(e) = ExecutionProcessLogs::append_log_line(
+                                            &db.pool,
+                                            execution_id,
+                                            &line,
+                                        )
+                                        .await
+                                        {
+                                            tracing::error!(
+                                                "Failed to append log line for execution {}: {}",
+                                                execution_id,
+                                                e
+                                            );
+                                        }
+                                    }
+
+                                    if !cap_was_reached && persistence_limiter.cap_reached() {
                                         tracing::warn!(
                                             "Execution {} reached raw log persistence limit of {} bytes",
                                             execution_id,
                                             max_persisted_bytes
                                         );
-                                        continue;
-                                    }
-
-                                    // Append this line to the database
-                                    if let Err(e) = ExecutionProcessLogs::append_log_line(
-                                        &db.pool,
-                                        execution_id,
-                                        &jsonl_line_with_newline,
-                                    )
-                                    .await
-                                    {
-                                        tracing::error!(
-                                            "Failed to append log line for execution {}: {}",
-                                            execution_id,
-                                            e
-                                        );
-                                    } else {
-                                        persisted_bytes =
-                                            persisted_bytes.saturating_add(line_bytes);
                                     }
                                 }
                                 Err(e) => {
@@ -1058,6 +1143,18 @@ pub trait ContainerService {
                             break;
                         }
                         LogMsg::JsonPatch(_) => continue,
+                    }
+                }
+
+                for line in persistence_limiter.finish() {
+                    if let Err(e) =
+                        ExecutionProcessLogs::append_log_line(&db.pool, execution_id, &line).await
+                    {
+                        tracing::error!(
+                            "Failed to append buffered tail log line for execution {}: {}",
+                            execution_id,
+                            e
+                        );
                     }
                 }
             }
@@ -1379,5 +1476,124 @@ pub trait ContainerService {
 
         tracing::debug!("Started next action: {:?}", next_action);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EXECUTION_LOG_CAP_REACHED_MESSAGE, RawLogPersistenceLimiter, serialize_log_message_line,
+    };
+    use utils::log_msg::LogMsg;
+
+    fn stdout_with_len(label: &str, len: usize) -> LogMsg {
+        LogMsg::Stdout(format!("{label}: {}", "x".repeat(len)))
+    }
+
+    fn parse_persisted(lines: Vec<String>) -> Vec<LogMsg> {
+        lines.into_iter()
+            .map(|line| serde_json::from_str(line.trim_end()).unwrap())
+            .collect()
+    }
+
+    fn serialized_len(msg: &LogMsg) -> u64 {
+        serialize_log_message_line(msg).unwrap().len() as u64
+    }
+
+    #[test]
+    fn preserves_final_stdout_after_hitting_log_cap() {
+        let mut limiter = RawLogPersistenceLimiter::with_tail_budget_bytes(900, 32 * 1024);
+        let mut persisted = Vec::new();
+
+        let messages = vec![
+            stdout_with_len("head-1", 160),
+            stdout_with_len("head-2", 160),
+            stdout_with_len("head-3", 160),
+            stdout_with_len("middle-dropped", 160),
+            stdout_with_len("final-conclusion", 160),
+        ];
+
+        for msg in &messages {
+            persisted.extend(limiter.ingest(msg).unwrap());
+        }
+        persisted.extend(limiter.finish());
+
+        let persisted_messages = parse_persisted(persisted);
+
+        assert!(persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content.contains("head-1")
+        )));
+        assert!(persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stderr(content) if content == EXECUTION_LOG_CAP_REACHED_MESSAGE
+        )));
+        assert!(persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content.contains("final-conclusion")
+        )));
+        assert!(!persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content.contains("middle-dropped")
+        )));
+    }
+
+    #[test]
+    fn uses_configured_tail_budget_for_final_stdout() {
+        let head = stdout_with_len("head-1", 40);
+        let middle = stdout_with_len("middle-dropped", 40);
+        let final_msg = stdout_with_len("final-kept", 16);
+        let truncation = LogMsg::Stderr(EXECUTION_LOG_CAP_REACHED_MESSAGE.to_string());
+        let tail_budget = serialized_len(&final_msg) + 8;
+        let max_bytes = serialized_len(&head) + serialized_len(&truncation) + tail_budget;
+
+        let mut limiter =
+            RawLogPersistenceLimiter::with_tail_budget_bytes(max_bytes, tail_budget);
+        let mut persisted = Vec::new();
+
+        let messages = vec![head, middle, final_msg];
+
+        for msg in &messages {
+            persisted.extend(limiter.ingest(msg).unwrap());
+        }
+        persisted.extend(limiter.finish());
+
+        let persisted_messages = parse_persisted(persisted);
+
+        assert!(persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content.contains("final-kept")
+        )));
+        assert!(!persisted_messages.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content.contains("middle-dropped")
+        )));
+    }
+
+    #[test]
+    fn keeps_all_stdout_when_under_log_cap() {
+        let mut limiter = RawLogPersistenceLimiter::with_tail_budget_bytes(0, 32 * 1024);
+        let mut persisted = Vec::new();
+        let messages = vec![
+            stdout_with_len("first", 32),
+            stdout_with_len("second", 32),
+        ];
+
+        for msg in &messages {
+            persisted.extend(limiter.ingest(msg).unwrap());
+        }
+        persisted.extend(limiter.finish());
+
+        let persisted_messages = parse_persisted(persisted);
+        assert_eq!(persisted_messages.len(), 2);
+        assert!(matches!(
+            &persisted_messages[0],
+            LogMsg::Stdout(content) if content.contains("first")
+        ));
+        assert!(matches!(
+            &persisted_messages[1],
+            LogMsg::Stdout(content) if content.contains("second")
+        ));
+        assert!(serialize_log_message_line(&messages[0]).is_ok());
     }
 }

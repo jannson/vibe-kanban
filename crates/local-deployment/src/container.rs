@@ -657,11 +657,17 @@ impl LocalContainerService {
                 tokio::time::sleep(Duration::from_millis(50)).await; // Wait for the finish message to propogate
                 match Arc::try_unwrap(msg_arc) {
                     Ok(inner) => drop(inner),
-                    Err(arc) => tracing::error!(
-                        "There are still {} strong Arcs to MsgStore for {}",
-                        Arc::strong_count(&arc),
-                        exec_id
-                    ),
+                    Err(arc) => {
+                        let stats = arc.stats();
+                        tracing::error!(
+                            execution_id = %exec_id,
+                            strong_arcs = Arc::strong_count(&arc),
+                            history_len = stats.history_len,
+                            total_bytes = stats.total_bytes,
+                            retain_raw_history = stats.retain_raw_history,
+                            "There are still strong Arcs to MsgStore after execution cleanup"
+                        )
+                    }
                 }
             }
 
@@ -1004,6 +1010,10 @@ impl ContainerService for LocalContainerService {
 
     async fn execution_log_max_bytes(&self) -> u64 {
         u64::from(self.config.read().await.execution_log_max_mb) * 1024 * 1024
+    }
+
+    async fn execution_log_tail_bytes(&self) -> u64 {
+        u64::from(self.config.read().await.execution_log_tail_kb) * 1024
     }
 
     fn workspace_to_current_dir(&self, workspace: &Workspace) -> PathBuf {

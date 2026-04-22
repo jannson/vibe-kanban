@@ -271,6 +271,11 @@
             "label": "Execution Log Size Cap (MB)",
             "helper": "Stops persisting additional stdout/stderr for a single execution after this limit is reached. Set to 0 to disable the cap."
           },
+          "tailKb": {
+            "label": "Preserved Final Log Tail (KB)",
+            "helper": "After the size cap is reached, keep the latest stdout/stderr tail so the final conclusion and next steps still appear. Set to 0 to disable tail preservation.",
+            "recommendation": "Recommended: 32–128 KB. Increase it if final conclusions are still cut off; lower it if database size matters more."
+          },
           "cleanupOnStartup": {
             "label": "Run cleanup on startup",
             "helper": "Disabled by default for safer rollouts. Enable only if startup cleanup time is acceptable for this environment."

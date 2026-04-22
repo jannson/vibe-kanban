@@ -271,6 +271,11 @@
             "label": "Límite de logs por ejecución (MB)",
             "helper": "Deja de persistir stdout/stderr adicionales para una sola ejecución cuando se alcanza este límite. Usa 0 para desactivar el límite."
           },
+          "tailKb": {
+            "label": "Cola final preservada del log (KB)",
+            "helper": "Después de alcanzar el límite, conserva la parte final más reciente de stdout/stderr para que la conclusión final y los siguientes pasos sigan apareciendo. Usa 0 para desactivar esta preservación.",
+            "recommendation": "Recomendado: 32–128 KB. Auméntalo si la conclusión final todavía se corta; redúcelo si el tamaño de la base de datos importa más."
+          },
           "cleanupOnStartup": {
             "label": "Ejecutar limpieza al iniciar",
             "helper": "Se desactiva por defecto para despliegues más seguros. Actívalo solo si el tiempo de limpieza al iniciar es aceptable en este entorno."

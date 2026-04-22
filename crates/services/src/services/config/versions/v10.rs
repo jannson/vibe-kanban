@@ -48,6 +48,10 @@ fn default_execution_log_max_mb() -> u32 {
     20
 }
 
+fn default_execution_log_tail_kb() -> u32 {
+    32
+}
+
 fn default_execution_log_cleanup_on_startup() -> bool {
     false
 }
@@ -174,6 +178,8 @@ pub struct Config {
     pub cleanup_dropped_execution_logs: bool,
     #[serde(default = "default_execution_log_max_mb")]
     pub execution_log_max_mb: u32,
+    #[serde(default = "default_execution_log_tail_kb")]
+    pub execution_log_tail_kb: u32,
     #[serde(default = "default_execution_log_cleanup_on_startup")]
     pub execution_log_cleanup_on_startup: bool,
     #[serde(default = "default_cleanup_closed_task_intermediate_logs")]
@@ -223,6 +229,7 @@ impl Config {
             execution_log_retention_days: default_execution_log_retention_days(),
             cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
             execution_log_max_mb: default_execution_log_max_mb(),
+            execution_log_tail_kb: default_execution_log_tail_kb(),
             execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
             cleanup_closed_task_intermediate_logs: default_cleanup_closed_task_intermediate_logs(),
             keep_latest_execution_logs_per_session: default_keep_latest_execution_logs_per_session(
@@ -310,6 +317,12 @@ impl Config {
         if self.execution_log_max_mb > 1024 {
             return Err(ConfigError::ValidationError(
                 "Execution log size cap must be between 0 and 1024 MB".to_string(),
+            ));
+        }
+
+        if self.execution_log_tail_kb > 2048 {
+            return Err(ConfigError::ValidationError(
+                "Execution log tail must be between 0 and 2048 KB".to_string(),
             ));
         }
 
@@ -480,6 +493,7 @@ impl Default for Config {
             execution_log_retention_days: default_execution_log_retention_days(),
             cleanup_dropped_execution_logs: default_cleanup_dropped_execution_logs(),
             execution_log_max_mb: default_execution_log_max_mb(),
+            execution_log_tail_kb: default_execution_log_tail_kb(),
             execution_log_cleanup_on_startup: default_execution_log_cleanup_on_startup(),
             cleanup_closed_task_intermediate_logs: default_cleanup_closed_task_intermediate_logs(),
             keep_latest_execution_logs_per_session: default_keep_latest_execution_logs_per_session(
@@ -529,6 +543,7 @@ mod tests {
         assert_eq!(config.execution_log_retention_days, 30);
         assert!(config.cleanup_dropped_execution_logs);
         assert_eq!(config.execution_log_max_mb, 20);
+        assert_eq!(config.execution_log_tail_kb, 32);
         assert!(!config.execution_log_cleanup_on_startup);
         assert!(config.cleanup_closed_task_intermediate_logs);
         assert_eq!(config.keep_latest_execution_logs_per_session, 1);
@@ -697,6 +712,15 @@ mod tests {
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("Execution log size cap"));
+    }
+
+    #[test]
+    fn rejects_invalid_execution_log_tail_kb() {
+        let mut config = Config::default();
+        config.execution_log_tail_kb = 2049;
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("Execution log tail"));
     }
 
     #[test]

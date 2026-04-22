@@ -1701,6 +1701,57 @@ export function GeneralSettings() {
             </p>
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="execution-log-tail-kb">
+              {t('settings.general.maintenance.executionLogs.tailKb.label')}
+            </Label>
+            <Input
+              id="execution-log-tail-kb"
+              type="number"
+              min={0}
+              max={2048}
+              value={draft?.execution_log_tail_kb ?? 32}
+              onChange={(e) =>
+                updateDraft({
+                  execution_log_tail_kb: Math.min(
+                    2048,
+                    Math.max(
+                      0,
+                      Number.parseInt(e.target.value || '0', 10) || 0
+                    )
+                  ),
+                })
+              }
+            />
+            <div className="flex flex-wrap gap-2">
+              {[32, 64, 128].map((presetKb) => {
+                const isActive = (draft?.execution_log_tail_kb ?? 32) === presetKb;
+
+                return (
+                  <Button
+                    key={presetKb}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? 'default' : 'outline'}
+                    onClick={() =>
+                      updateDraft({ execution_log_tail_kb: presetKb })
+                    }
+                  >
+                    {presetKb} KB
+                  </Button>
+                );
+              })}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.maintenance.executionLogs.tailKb.helper')}
+            </p>
+            <p className="text-xs text-muted-foreground/80">
+              {t(
+                'settings.general.maintenance.executionLogs.tailKb.recommendation'
+              )}
+            </p>
+          </div>
+
           <div className="flex items-center space-x-2">
             <Checkbox
               id="execution-log-cleanup-on-startup"

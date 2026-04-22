@@ -68,11 +68,9 @@ export function streamJsonPatchEntries<E = unknown>(
         const raw = msg.JsonPatch as Operation[];
         const ops = dedupeOps(raw);
 
-        // Apply to a working copy (applyPatch mutates)
-        const next = structuredClone(snapshot);
-        applyPatch(next as unknown as object, ops);
+        applyPatch(snapshot as unknown as object, ops);
 
-        snapshot = next;
+        snapshot = refreshPatchedSnapshot(snapshot, ops);
         notify();
       }
 
@@ -124,6 +122,33 @@ export function streamJsonPatchEntries<E = unknown>(
       connected = false;
     },
   };
+}
+
+function refreshPatchedSnapshot<E>(
+  snapshot: PatchContainer<E>,
+  ops: Operation[]
+): PatchContainer<E> {
+  const next = { ...snapshot };
+  const nextRecord = next as Record<string, unknown>;
+  const touchedTopLevelKeys = new Set<string>();
+
+  for (const op of ops) {
+    const topLevelKey = op.path.split('/').filter(Boolean)[0];
+    if (topLevelKey) {
+      touchedTopLevelKeys.add(topLevelKey);
+    }
+  }
+
+  for (const key of touchedTopLevelKeys) {
+    const value = nextRecord[key];
+    if (Array.isArray(value)) {
+      nextRecord[key] = [...value];
+    } else if (value && typeof value === 'object') {
+      nextRecord[key] = { ...(value as Record<string, unknown>) };
+    }
+  }
+
+  return next;
 }
 
 /**
