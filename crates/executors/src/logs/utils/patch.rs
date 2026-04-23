@@ -6,7 +6,7 @@ use serde_json::{from_value, json, to_value};
 use ts_rs::TS;
 use workspace_utils::{diff::Diff, msg_store::MsgStore};
 
-use crate::logs::{NormalizedEntry, utils::EntryIndexProvider};
+use crate::logs::{NormalizedEntry, NormalizedEntryType, utils::EntryIndexProvider};
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
@@ -50,6 +50,25 @@ impl ConversationPatch {
         };
 
         from_value(json!([patch_entry])).unwrap()
+    }
+
+    pub fn append_normalized_entry(entry: NormalizedEntry) -> Patch {
+        let patch_entry = PatchEntry {
+            op: PatchOperation::Add,
+            path: "/entries/-".to_string(),
+            value: PatchType::NormalizedEntry(entry),
+        };
+
+        from_value(json!([patch_entry])).unwrap()
+    }
+
+    pub fn append_system_message(content: impl Into<String>) -> Patch {
+        Self::append_normalized_entry(NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::SystemMessage,
+            content: content.into(),
+            metadata: None,
+        })
     }
 
     /// Create an ADD patch for a new string at the given index

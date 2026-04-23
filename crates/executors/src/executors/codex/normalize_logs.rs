@@ -53,6 +53,8 @@ trait ToNormalizedEntryOpt {
     fn to_normalized_entry_opt(&self) -> Option<NormalizedEntry>;
 }
 
+const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Deserialize)]
 struct CodexNotificationParams {
     #[serde(rename = "msg")]
@@ -69,13 +71,119 @@ struct StreamingText {
 struct CommandState {
     index: Option<usize>,
     command: String,
-    stdout: String,
-    stderr: String,
-    formatted_output: Option<String>,
+    stdout: BoundedOutput,
+    stderr: BoundedOutput,
+    formatted_output: Option<BoundedOutput>,
     status: ToolStatus,
     exit_code: Option<i32>,
     awaiting_approval: bool,
     call_id: String,
+}
+
+#[derive(Default)]
+struct BoundedOutput {
+    content: String,
+    truncated_bytes: usize,
+}
+
+impl BoundedOutput {
+    fn from_string(content: String) -> Self {
+        let mut output = Self {
+            content,
+            truncated_bytes: 0,
+        };
+        output.enforce_limit();
+        output
+    }
+
+    fn push_str(&mut self, chunk: &str) {
+        self.content.push_str(chunk);
+        self.enforce_limit();
+    }
+
+    fn as_labeled_section(&self, label: &str) -> Option<String> {
+        let cleaned = self.content.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+
+        let mut section = String::new();
+        if self.truncated_bytes > 0 {
+            section.push_str(&format!(
+                "[{label} truncated, omitted {} bytes]\n",
+                self.truncated_bytes
+            ));
+        }
+        section.push_str(label);
+        section.push_str(":\n");
+        section.push_str(cleaned);
+        Some(section)
+    }
+
+    fn as_command_output(&self) -> Option<String> {
+        let cleaned = self.content.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+
+        let mut output = String::new();
+        if self.truncated_bytes > 0 {
+            output.push_str(&format!(
+                "[command output truncated, omitted {} bytes]\n",
+                self.truncated_bytes
+            ));
+        }
+        output.push_str(cleaned);
+        Some(output)
+    }
+
+    fn enforce_limit(&mut self) {
+        if self.content.len() <= MAX_COMMAND_OUTPUT_BYTES {
+            return;
+        }
+
+        let keep_from = ceil_char_boundary(
+            &self.content,
+            self.content.len() - MAX_COMMAND_OUTPUT_BYTES,
+        );
+        self.content.drain(..keep_from);
+        self.truncated_bytes = self.truncated_bytes.saturating_add(keep_from);
+    }
+}
+
+impl From<String> for BoundedOutput {
+    fn from(value: String) -> Self {
+        Self::from_string(value)
+    }
+}
+
+fn ceil_char_boundary(content: &str, offset: usize) -> usize {
+    let mut boundary = offset.min(content.len());
+    while boundary < content.len() && !content.is_char_boundary(boundary) {
+        boundary += 1;
+    }
+    boundary
+}
+
+impl CommandState {
+    fn push_stdout_chunk(&mut self, chunk: impl AsRef<str>) {
+        self.stdout.push_str(chunk.as_ref());
+    }
+
+    fn push_stderr_chunk(&mut self, chunk: impl AsRef<str>) {
+        self.stderr.push_str(chunk.as_ref());
+    }
+
+    fn set_formatted_output(&mut self, output: String) {
+        self.formatted_output = Some(output.into());
+    }
+
+    fn apply_output_delta(&mut self, stream: ExecOutputStream, chunk: impl AsRef<str>) {
+        match stream {
+            ExecOutputStream::Stdout => self.push_stdout_chunk(chunk),
+            ExecOutputStream::Stderr => self.push_stderr_chunk(chunk),
+        }
+    }
 }
 
 impl ToNormalizedEntry for CommandState {
@@ -92,10 +200,13 @@ impl ToNormalizedEntry for CommandState {
                         exit_status: self
                             .exit_code
                             .map(|code| CommandExitStatus::ExitCode { code }),
-                        output: if self.formatted_output.is_some() {
-                            self.formatted_output.clone()
+                        output: if let Some(formatted_output) = &self.formatted_output {
+                            formatted_output.as_command_output()
                         } else {
-                            build_command_output(Some(&self.stdout), Some(&self.stderr))
+                            build_command_output(
+                                self.stdout.as_labeled_section("stdout"),
+                                self.stderr.as_labeled_section("stderr"),
+                            )
                         },
                     }),
                 },
@@ -562,8 +673,8 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                         CommandState {
                             index: None,
                             command: command_text,
-                            stdout: String::new(),
-                            stderr: String::new(),
+                            stdout: String::new().into(),
+                            stderr: String::new().into(),
                             formatted_output: None,
                             status: ToolStatus::Created,
                             exit_code: None,
@@ -589,19 +700,8 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                         if chunk.is_empty() {
                             continue;
                         }
-                        match stream {
-                            ExecOutputStream::Stdout => command_state.stdout.push_str(&chunk),
-                            ExecOutputStream::Stderr => command_state.stderr.push_str(&chunk),
-                        }
-                        let Some(index) = command_state.index else {
-                            tracing::error!("missing entry index for existing command state");
-                            continue;
-                        };
-                        replace_normalized_entry(
-                            &msg_store,
-                            index,
-                            command_state.to_normalized_entry(),
-                        );
+                        command_state.apply_output_delta(stream, &chunk);
+                        continue;
                     }
                 }
                 EventMsg::ExecCommandEnd(ExecCommandEndEvent {
@@ -621,7 +721,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     process_id: _,
                 }) => {
                     if let Some(mut command_state) = state.commands.remove(&call_id) {
-                        command_state.formatted_output = Some(formatted_output);
+                        command_state.set_formatted_output(formatted_output);
                         command_state.exit_code = Some(exit_code);
                         command_state.awaiting_approval = false;
                         command_state.status = if exit_code == 0 {
@@ -1064,19 +1164,13 @@ fn handle_model_params(
     );
 }
 
-fn build_command_output(stdout: Option<&str>, stderr: Option<&str>) -> Option<String> {
+fn build_command_output(stdout: Option<String>, stderr: Option<String>) -> Option<String> {
     let mut sections = Vec::new();
     if let Some(out) = stdout {
-        let cleaned = out.trim();
-        if !cleaned.is_empty() {
-            sections.push(format!("stdout:\n{cleaned}"));
-        }
+        sections.push(out);
     }
     if let Some(err) = stderr {
-        let cleaned = err.trim();
-        if !cleaned.is_empty() {
-            sections.push(format!("stderr:\n{cleaned}"));
-        }
+        sections.push(err);
     }
 
     if sections.is_empty() {
@@ -1202,5 +1296,210 @@ impl ToNormalizedEntryOpt for Approval {
                 metadata: None,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    use codex_app_server_protocol::JSONRPCNotification;
+    use codex_protocol::protocol::{
+        EventMsg, ExecCommandBeginEvent, ExecCommandEndEvent, ExecCommandOutputDeltaEvent,
+        ExecCommandSource,
+    };
+    use crate::logs::utils::patch::extract_normalized_entry_from_patch;
+    use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
+
+    use super::{
+        ActionType, BoundedOutput, CommandState, ExecOutputStream, NormalizedEntryType,
+        ToNormalizedEntry, ToolStatus,
+    };
+
+    fn command_output(state: &CommandState) -> String {
+        let entry = state.to_normalized_entry();
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::CommandRun {
+                    result: Some(result), ..
+                },
+                ..
+            } => result.output.unwrap_or_default(),
+            other => panic!("unexpected entry type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn command_output_is_bounded_while_streaming() {
+        let mut state = CommandState {
+            command: "npm run dev".to_string(),
+            status: ToolStatus::Created,
+            ..Default::default()
+        };
+
+        state.push_stdout_chunk("a".repeat(80_000));
+        state.push_stdout_chunk("b".repeat(80_000));
+
+        let output = command_output(&state);
+
+        assert!(output.len() < 100_000);
+        assert!(output.contains("[stdout truncated"));
+        assert!(output.contains(&"b".repeat(4_096)));
+        assert!(!output.contains(&"a".repeat(20_000)));
+    }
+
+    #[test]
+    fn final_formatted_output_is_bounded() {
+        let mut state = CommandState {
+            command: "npm run build".to_string(),
+            status: ToolStatus::Success,
+            ..Default::default()
+        };
+
+        state.formatted_output = Some(format!(
+            "stdout:\n{}\n\nstderr:\n{}",
+            "x".repeat(120_000),
+            "y".repeat(40_000)
+        ).into());
+
+        let output = command_output(&state);
+
+        assert!(output.len() < 100_000);
+        assert!(output.contains("[command output truncated"));
+        assert!(output.contains(&"y".repeat(4_096)));
+    }
+
+    #[test]
+    fn compact_mode_accumulates_output_without_requesting_live_replace() {
+        let mut state = CommandState {
+            command: "npm run dev".to_string(),
+            status: ToolStatus::Created,
+            ..Default::default()
+        };
+
+        state.apply_output_delta(ExecOutputStream::Stdout, "x".repeat(32_000));
+        assert!(matches!(state.stdout, BoundedOutput { .. }));
+        assert!(command_output(&state).contains(&"x".repeat(4_096)));
+    }
+
+    #[test]
+    fn normal_mode_command_output_deltas_do_not_request_live_replace() {
+        let mut state = CommandState {
+            command: "npm run dev".to_string(),
+            status: ToolStatus::Created,
+            ..Default::default()
+        };
+
+        state.apply_output_delta(ExecOutputStream::Stdout, "streamed-output");
+        assert!(command_output(&state).contains("streamed-output"));
+    }
+
+    fn notification_line(msg: EventMsg) -> String {
+        format!(
+            "{}\n",
+            serde_json::to_string(&JSONRPCNotification {
+            method: "codex/event/test".to_string(),
+            params: Some(serde_json::json!({ "msg": msg })),
+        })
+        .unwrap()
+        )
+    }
+
+    #[tokio::test]
+    async fn command_output_deltas_only_emit_begin_and_final_summary_patches() {
+        let msg_store = Arc::new(MsgStore::new());
+
+        msg_store.push_stdout(notification_line(EventMsg::ExecCommandBegin(
+            ExecCommandBeginEvent {
+                call_id: "call-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["npm".to_string(), "run".to_string(), "dev".to_string()],
+                cwd: PathBuf::from("/tmp/worktree"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+            },
+        )));
+
+        for chunk in ["first", "second", "third"] {
+            msg_store.push_stdout(notification_line(EventMsg::ExecCommandOutputDelta(
+                ExecCommandOutputDeltaEvent {
+                    call_id: "call-1".to_string(),
+                    stream: ExecOutputStream::Stdout,
+                    chunk: chunk.as_bytes().to_vec(),
+                },
+            )));
+        }
+
+        msg_store.push_stdout(notification_line(EventMsg::ExecCommandEnd(
+            ExecCommandEndEvent {
+                call_id: "call-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["npm".to_string(), "run".to_string(), "dev".to_string()],
+                cwd: PathBuf::from("/tmp/worktree"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                stdout: "firstsecondthird".to_string(),
+                stderr: String::new(),
+                aggregated_output: "firstsecondthird".to_string(),
+                exit_code: 0,
+                duration: Duration::from_secs(1),
+                formatted_output: "stdout:\nfirstsecondthird".to_string(),
+            },
+        )));
+        msg_store.push_finished();
+
+        let mut rx = msg_store.get_receiver();
+        super::normalize_logs(msg_store.clone(), PathBuf::from("/tmp/worktree").as_path());
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let mut live_patches = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let LogMsg::JsonPatch(patch) = msg {
+                live_patches.push(patch);
+            }
+        }
+
+        let patches = msg_store
+            .get_history()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                LogMsg::JsonPatch(patch) => Some(patch),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(live_patches.len(), 2);
+        assert_eq!(patches.len(), 1);
+
+        let first = serde_json::to_value(&live_patches[0]).unwrap();
+        let second = serde_json::to_value(&live_patches[1]).unwrap();
+        assert_eq!(
+            first[0].get("op").and_then(|value| value.as_str()),
+            Some("add")
+        );
+        assert_eq!(
+            second[0].get("op").and_then(|value| value.as_str()),
+            Some("replace")
+        );
+
+        let output = patches
+            .last()
+            .and_then(extract_normalized_entry_from_patch)
+            .map(|(_, entry)| match entry.entry_type {
+                NormalizedEntryType::ToolUse {
+                    action_type: ActionType::CommandRun {
+                        result: Some(result), ..
+                    },
+                    ..
+                } => result.output.unwrap_or_default(),
+                other => panic!("unexpected entry type: {other:?}"),
+            })
+            .unwrap();
+
+        assert!(output.contains("firstsecondthird"));
     }
 }

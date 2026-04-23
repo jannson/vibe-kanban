@@ -59,8 +59,17 @@ use crate::services::{
 pub type ContainerRef = String;
 
 const EXECUTION_LOG_CAP_REACHED_MESSAGE: &str = "Execution log storage limit reached; further stdout/stderr for this run is no longer persisted to the database.";
+const COMPACT_LOGGING_MODE_MESSAGE: &str =
+    "Execution entered compact logging mode after the raw log persistence limit was reached.";
+
 fn serialize_log_message_line(msg: &LogMsg) -> Result<String, serde_json::Error> {
     serde_json::to_string(msg).map(|json| format!("{json}\n"))
+}
+
+fn compact_logging_mode_marker() -> LogMsg {
+    LogMsg::JsonPatch(ConversationPatch::append_system_message(
+        COMPACT_LOGGING_MODE_MESSAGE,
+    ))
 }
 
 struct RawLogPersistenceLimiter {
@@ -1073,7 +1082,23 @@ pub trait ContainerService {
                             match persistence_limiter.ingest(&msg) {
                                 Ok(lines) => {
                                     if !cap_was_reached && persistence_limiter.cap_reached() {
-                                        store.disable_raw_history_retention();
+                                        store.enter_compact_mode();
+                                        let marker = compact_logging_mode_marker();
+                                        store.push(marker.clone());
+                                        if let Ok(marker_line) = serialize_log_message_line(&marker)
+                                            && let Err(e) = ExecutionProcessLogs::append_log_line(
+                                                &db.pool,
+                                                execution_id,
+                                                &marker_line,
+                                            )
+                                            .await
+                                        {
+                                            tracing::error!(
+                                                "Failed to append compact mode marker for execution {}: {}",
+                                                execution_id,
+                                                e
+                                            );
+                                        }
                                         if memory_trace_enabled {
                                             let stats = store.stats();
                                             tracing::warn!(
@@ -1082,9 +1107,10 @@ pub trait ContainerService {
                                                 history_len = stats.history_len,
                                                 total_bytes = stats.total_bytes,
                                                 retain_raw_history = stats.retain_raw_history,
+                                                compact_mode_enabled = stats.compact_mode_enabled,
                                                 tail_persisted_bytes,
                                                 max_persisted_bytes,
-                                                "Disabled raw history retention after execution log cap was reached"
+                                                "Entered compact logging mode after execution log cap was reached"
                                             );
                                         }
                                     }
@@ -1482,8 +1508,11 @@ pub trait ContainerService {
 #[cfg(test)]
 mod tests {
     use super::{
-        EXECUTION_LOG_CAP_REACHED_MESSAGE, RawLogPersistenceLimiter, serialize_log_message_line,
+        COMPACT_LOGGING_MODE_MESSAGE, EXECUTION_LOG_CAP_REACHED_MESSAGE, RawLogPersistenceLimiter,
+        compact_logging_mode_marker, raw_messages_to_json_patch_stream, serialize_log_message_line,
     };
+    use executors::logs::{NormalizedEntry, NormalizedEntryType};
+    use futures::StreamExt;
     use utils::log_msg::LogMsg;
 
     fn stdout_with_len(label: &str, len: usize) -> LogMsg {
@@ -1595,5 +1624,47 @@ mod tests {
             LogMsg::Stdout(content) if content.contains("second")
         ));
         assert!(serialize_log_message_line(&messages[0]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn compact_logging_mode_marker_is_append_only_system_message() {
+        let marker = compact_logging_mode_marker();
+        let LogMsg::JsonPatch(patch) = marker else {
+            panic!("expected json patch marker");
+        };
+
+        let value = serde_json::to_value(&patch).unwrap();
+        let op = value.as_array().and_then(|ops| ops.first()).unwrap();
+        assert_eq!(op.get("op").and_then(|v| v.as_str()), Some("add"));
+        assert_eq!(op.get("path").and_then(|v| v.as_str()), Some("/entries/-"));
+
+        let entry: NormalizedEntry = serde_json::from_value(
+            op.get("value")
+                .and_then(|v| v.get("content"))
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .unwrap();
+        assert!(matches!(entry.entry_type, NormalizedEntryType::SystemMessage));
+        assert_eq!(entry.content, COMPACT_LOGGING_MODE_MESSAGE);
+    }
+
+    #[tokio::test]
+    async fn raw_fallback_stream_preserves_existing_json_patch_markers() {
+        let mut stream = raw_messages_to_json_patch_stream(vec![
+            LogMsg::Stdout("head".to_string()),
+            compact_logging_mode_marker(),
+            LogMsg::Stdout("tail".to_string()),
+        ]);
+
+        let mut messages = Vec::new();
+        while let Some(Ok(msg)) = stream.next().await {
+            messages.push(msg);
+        }
+
+        assert!(matches!(messages.last(), Some(LogMsg::Finished)));
+        assert!(matches!(messages[0], LogMsg::JsonPatch(_)));
+        assert!(matches!(messages[1], LogMsg::JsonPatch(_)));
+        assert!(matches!(messages[2], LogMsg::JsonPatch(_)));
     }
 }

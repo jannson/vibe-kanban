@@ -8,6 +8,7 @@ use std::{
 
 use axum::response::sse::Event;
 use futures::{StreamExt, TryStreamExt, future};
+use serde_json::Value;
 use tokio::{sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -32,12 +33,14 @@ pub struct MsgStoreStats {
     pub history_len: usize,
     pub total_bytes: usize,
     pub retain_raw_history: bool,
+    pub compact_mode_enabled: bool,
 }
 
 pub struct MsgStore {
     inner: RwLock<Inner>,
     sender: broadcast::Sender<LogMsg>,
     retain_raw_history: AtomicBool,
+    compact_mode_enabled: AtomicBool,
 }
 
 impl Default for MsgStore {
@@ -56,6 +59,7 @@ impl MsgStore {
             }),
             sender,
             retain_raw_history: AtomicBool::new(true),
+            compact_mode_enabled: AtomicBool::new(false),
         }
     }
 
@@ -67,10 +71,21 @@ impl MsgStore {
             return;
         }
 
-        let bytes = msg.approx_bytes();
-        let msg = Arc::new(msg);
+        let mut msg = msg;
+        let mut bytes = msg.approx_bytes();
 
         let mut inner = self.inner.write().unwrap();
+        if let Some(compacted) = compact_patch_history(&mut inner, &msg) {
+            match compacted {
+                CompactedPatch::DropNew => return,
+                CompactedPatch::ReplaceWith(next_msg) => {
+                    msg = next_msg;
+                    bytes = msg.approx_bytes();
+                }
+            }
+        }
+
+        let msg = Arc::new(msg);
         while inner.total_bytes.saturating_add(bytes) > HISTORY_BYTES {
             if let Some(front) = inner.history.pop_front() {
                 inner.total_bytes = inner.total_bytes.saturating_sub(front.bytes);
@@ -124,6 +139,15 @@ impl MsgStore {
         self.retain_raw_history.store(true, Ordering::Relaxed);
     }
 
+    pub fn enter_compact_mode(&self) {
+        self.compact_mode_enabled.store(true, Ordering::Relaxed);
+        self.disable_raw_history_retention();
+    }
+
+    pub fn compact_mode_enabled(&self) -> bool {
+        self.compact_mode_enabled.load(Ordering::Relaxed)
+    }
+
     pub fn get_receiver(&self) -> broadcast::Receiver<LogMsg> {
         self.sender.subscribe()
     }
@@ -134,6 +158,7 @@ impl MsgStore {
             history_len: inner.history.len(),
             total_bytes: inner.total_bytes,
             retain_raw_history: self.retain_raw_history.load(Ordering::Relaxed),
+            compact_mode_enabled: self.compact_mode_enabled.load(Ordering::Relaxed),
         }
     }
 
@@ -240,10 +265,118 @@ impl MsgStore {
     }
 }
 
+enum PatchOp {
+    Add,
+    Replace,
+    Remove,
+}
+
+struct SinglePatchMeta {
+    path: String,
+    op: PatchOp,
+    value: Option<Value>,
+}
+
+enum CompactedPatch {
+    DropNew,
+    ReplaceWith(LogMsg),
+}
+
+fn compact_patch_history(inner: &mut Inner, msg: &LogMsg) -> Option<CompactedPatch> {
+    let meta = single_patch_meta(msg)?;
+    if meta.path.ends_with("/-") {
+        return None;
+    }
+
+    let mut matched_indices = Vec::new();
+    let mut saw_add = false;
+    for (idx, stored) in inner.history.iter().enumerate() {
+        let Some(stored_meta) = single_patch_meta(stored.msg.as_ref()) else {
+            continue;
+        };
+        if stored_meta.path != meta.path {
+            continue;
+        }
+        if matches!(stored_meta.op, PatchOp::Add) {
+            saw_add = true;
+        }
+        matched_indices.push(idx);
+    }
+
+    if matched_indices.is_empty() {
+        return None;
+    }
+
+    for idx in matched_indices.into_iter().rev() {
+        if let Some(removed) = inner.history.remove(idx) {
+            inner.total_bytes = inner.total_bytes.saturating_sub(removed.bytes);
+        }
+    }
+
+    match meta.op {
+        PatchOp::Remove => Some(CompactedPatch::DropNew),
+        PatchOp::Add | PatchOp::Replace => {
+            let op = if saw_add { "add" } else { "replace" };
+            let value = meta.value?;
+            Some(CompactedPatch::ReplaceWith(LogMsg::JsonPatch(
+                single_patch_from_parts(op, &meta.path, value),
+            )))
+        }
+    }
+}
+
+fn single_patch_meta(msg: &LogMsg) -> Option<SinglePatchMeta> {
+    let LogMsg::JsonPatch(patch) = msg else {
+        return None;
+    };
+
+    let value = serde_json::to_value(patch).ok()?;
+    let ops = value.as_array()?;
+    if ops.len() != 1 {
+        return None;
+    }
+    let op = ops.first()?;
+    let op_name = op.get("op")?.as_str()?;
+    let path = op.get("path")?.as_str()?.to_string();
+    let value = op.get("value").cloned();
+
+    let op = match op_name {
+        "add" => PatchOp::Add,
+        "replace" => PatchOp::Replace,
+        "remove" => PatchOp::Remove,
+        _ => return None,
+    };
+
+    Some(SinglePatchMeta { path, op, value })
+}
+
+fn single_patch_from_parts(op: &str, path: &str, value: Value) -> json_patch::Patch {
+    serde_json::from_value(serde_json::json!([{
+        "op": op,
+        "path": path,
+        "value": value,
+    }]))
+    .expect("single patch should deserialize")
+}
+
 #[cfg(test)]
 mod tests {
     use super::MsgStore;
     use crate::log_msg::LogMsg;
+    use json_patch::Patch;
+    use serde_json::json;
+
+    fn replace_patch(path: &str, value: &str) -> Patch {
+        serde_json::from_value(json!([{
+            "op": "replace",
+            "path": path,
+            "value": {
+                "type": "STDOUT",
+                "content": value,
+            }
+        }]))
+        .unwrap()
+    }
 
     #[test]
     fn disabling_raw_history_retention_stops_storing_new_raw_logs() {
@@ -278,6 +411,27 @@ mod tests {
     }
 
     #[test]
+    fn entering_compact_mode_disables_raw_history_and_sets_flag() {
+        let store = MsgStore::new();
+        assert!(!store.compact_mode_enabled());
+        assert!(store.stats().retain_raw_history);
+
+        store.enter_compact_mode();
+
+        let stats = store.stats();
+        assert!(store.compact_mode_enabled());
+        assert!(stats.compact_mode_enabled);
+        assert!(!stats.retain_raw_history);
+
+        store.push_stdout("skipped-after-compact");
+        let history = store.get_history();
+        assert!(!history.iter().any(|msg| matches!(
+            msg,
+            LogMsg::Stdout(content) if content == "skipped-after-compact"
+        )));
+    }
+
+    #[test]
     fn re_enabling_raw_history_retention_resumes_storage() {
         let store = MsgStore::new();
         store.disable_raw_history_retention();
@@ -295,5 +449,71 @@ mod tests {
             msg,
             LogMsg::Stdout(content) if content == "stored-again"
         )));
+    }
+
+    #[test]
+    fn replacing_same_patch_path_compacts_history() {
+        let store = MsgStore::new();
+
+        store.push(LogMsg::JsonPatch(replace_patch("/entries/0", "first")));
+        let first_stats = store.stats();
+
+        store.push(LogMsg::JsonPatch(replace_patch(
+            "/entries/0",
+            &"x".repeat(32_000),
+        )));
+        let second_stats = store.stats();
+
+        store.push(LogMsg::JsonPatch(replace_patch(
+            "/entries/0",
+            &"y".repeat(32_000),
+        )));
+        let third_stats = store.stats();
+
+        assert_eq!(first_stats.history_len, 1);
+        assert_eq!(second_stats.history_len, 1);
+        assert_eq!(third_stats.history_len, 1);
+        assert!(third_stats.total_bytes < first_stats.total_bytes + second_stats.total_bytes);
+    }
+
+    #[test]
+    fn append_path_patches_are_not_compacted() {
+        let store = MsgStore::new();
+
+        let append_first: Patch = serde_json::from_value(json!([{
+            "op": "add",
+            "path": "/entries/-",
+            "value": {
+                "type": "NORMALIZED_ENTRY",
+                "content": {
+                    "timestamp": null,
+                    "entry_type": { "type": "system_message" },
+                    "content": "first",
+                    "metadata": null
+                }
+            }
+        }]))
+        .unwrap();
+
+        let append_second: Patch = serde_json::from_value(json!([{
+            "op": "add",
+            "path": "/entries/-",
+            "value": {
+                "type": "NORMALIZED_ENTRY",
+                "content": {
+                    "timestamp": null,
+                    "entry_type": { "type": "system_message" },
+                    "content": "second",
+                    "metadata": null
+                }
+            }
+        }]))
+        .unwrap();
+
+        store.push(LogMsg::JsonPatch(append_first));
+        store.push(LogMsg::JsonPatch(append_second));
+
+        let stats = store.stats();
+        assert_eq!(stats.history_len, 2);
     }
 }
