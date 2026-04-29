@@ -56,13 +56,18 @@ As the agent works, each action appears in real-time:
 Approvals are currently supported for Codex, with Claude Code coming soon.
 </Note>
 
-When an agent takes an action that requires human approval, a row appears below the action with approve/deny buttons.
+When an agent takes an action that requires human approval, a row appears below the action with approve/deny controls.
 
 <Frame>
 <img src="/images/vk-approval.png" alt="Approval prompt showing tick and cross buttons to approve or deny an agent action" />
 </Frame>
 
-Click the tick to approve or the cross to deny the action. The agent will proceed or adjust based on your decision.
+Depending on the request, you may see one of two interaction patterns:
+
+- **Tool approval**: approve or deny a command, patch, or other tool action
+- **Question prompt**: answer one or more questions before the agent continues
+
+For tool approvals, click the tick to approve or the cross to deny the action. For question prompts, fill in the requested answers and submit them. The agent will proceed or adjust based on your response.
 
 ### 5. Cleanup Script
 

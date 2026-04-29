@@ -42,6 +42,7 @@ use futures::{StreamExt, future};
 use sqlx::Error as SqlxError;
 use thiserror::Error;
 use tokio::{sync::RwLock, task::JoinHandle};
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use utils::{
     log_msg::LogMsg,
     msg_store::MsgStore,
@@ -853,10 +854,33 @@ pub trait ContainerService {
                     start.elapsed().as_millis()
                 );
             }
+            let history = store
+                .get_history()
+                .into_iter()
+                .filter(|msg| matches!(msg, LogMsg::JsonPatch(..)))
+                .map(Ok::<_, std::io::Error>);
+            let live = BroadcastStream::new(store.get_receiver()).filter_map({
+                let id = *id;
+                move |msg_result| async move {
+                    match msg_result {
+                        Ok(LogMsg::JsonPatch(patch)) => Some(Ok(LogMsg::JsonPatch(patch))),
+                        Ok(_) => None,
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                execution_process_id = %id,
+                                skipped = skipped,
+                                "normalized logs stream lagged; forcing reconnect"
+                            );
+                            Some(Err(std::io::Error::other(format!(
+                                "normalized logs stream lagged after skipping {skipped} messages"
+                            ))))
+                        }
+                    }
+                }
+            });
             Some(
-                store
-                    .history_plus_stream() // BoxStream<Result<LogMsg, io::Error>>
-                    .filter(|msg| future::ready(matches!(msg, Ok(LogMsg::JsonPatch(..)))))
+                futures::stream::iter(history)
+                    .chain(live)
                     .chain(futures::stream::once(async {
                         Ok::<_, std::io::Error>(LogMsg::Finished)
                     }))

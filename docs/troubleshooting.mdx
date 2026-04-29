@@ -29,6 +29,40 @@ RUST_LOG=debug npx vibe-kanban
 
 This will provide verbose logging output that can help identify the root cause of issues.
 
+## Approval API Migration
+
+If you maintain a custom frontend, script, or integration that posts approval decisions directly to Vibe Kanban, make sure it uses the current approval schema.
+
+**Current request shape:**
+
+```json
+{
+  "execution_process_id": "UUID",
+  "status": {
+    "status": "approved"
+  }
+}
+```
+
+The `status` field now uses `ApprovalOutcome`, not the older `ApprovalStatus` shape. In addition to `approved`, `denied`, and `timed_out`, question prompts can now return:
+
+```json
+{
+  "execution_process_id": "UUID",
+  "status": {
+    "status": "answered",
+    "answers": [
+      {
+        "question": "Pick one",
+        "answer": ["A"]
+      }
+    ]
+  }
+}
+```
+
+If an older integration still sends the legacy format or sends an invalid approval state for a question prompt, the server now returns a client error instead of a generic `500`.
+
 ## DANGER: Wiping Your Database 
 
 If you encounter irrecoverable errors and need to completely wipe your Vibe Kanban database, you can delete the application data directory for your operating system. 

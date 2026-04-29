@@ -1,13 +1,18 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use codex_app_server_protocol::{
-    JSONRPCNotification, JSONRPCResponse, NewConversationResponse, ServerNotification,
+    CommandExecutionOutputDeltaNotification, CommandExecutionStatus as AppCommandExecutionStatus,
+    DynamicToolCallStatus as AppDynamicToolCallStatus,
+    ItemCompletedNotification as AppItemCompletedNotification,
+    ItemStartedNotification as AppItemStartedNotification, JSONRPCNotification, JSONRPCRequest,
+    JSONRPCResponse, ServerNotification, ServerRequest, ThreadForkResponse,
+    ThreadItem as AppThreadItem, ThreadStartResponse, ThreadStartedNotification,
+    ToolRequestUserInputQuestion,
 };
-use codex_mcp_types::ContentBlock;
 use codex_protocol::{
     openai_models::ReasoningEffort,
     plan_tool::{StepStatus, UpdatePlanArgs},
@@ -22,7 +27,6 @@ use codex_protocol::{
     },
 };
 use futures::StreamExt;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use workspace_utils::{
@@ -32,7 +36,6 @@ use workspace_utils::{
 
 use crate::{
     approvals::ToolCallMetadata,
-    executors::codex::session::SessionHandler,
     logs::{
         ActionType, CommandExitStatus, CommandRunResult, FileChange, NormalizedEntry,
         NormalizedEntryError, NormalizedEntryType, TodoItem, ToolResult, ToolResultValueType,
@@ -228,6 +231,37 @@ struct McpToolState {
     status: ToolStatus,
 }
 
+struct DynamicToolState {
+    index: Option<usize>,
+    tool: String,
+    arguments: Value,
+    result: Option<ToolResult>,
+    status: ToolStatus,
+    call_id: String,
+}
+
+impl ToNormalizedEntry for DynamicToolState {
+    fn to_normalized_entry(&self) -> NormalizedEntry {
+        NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::ToolUse {
+                tool_name: self.tool.clone(),
+                action_type: ActionType::Tool {
+                    tool_name: self.tool.clone(),
+                    arguments: Some(self.arguments.clone()),
+                    result: self.result.clone(),
+                },
+                status: self.status.clone(),
+            },
+            content: self.tool.clone(),
+            metadata: serde_json::to_value(ToolCallMetadata {
+                tool_call_id: self.call_id.clone(),
+            })
+            .ok(),
+        }
+    }
+}
+
 impl ToNormalizedEntry for McpToolState {
     fn to_normalized_entry(&self) -> NormalizedEntry {
         let tool_name = format!("mcp:{}:{}", self.invocation.server, self.invocation.tool);
@@ -244,6 +278,37 @@ impl ToNormalizedEntry for McpToolState {
             },
             content: self.invocation.tool.clone(),
             metadata: None,
+        }
+    }
+}
+
+struct UserInputRequestState {
+    index: Option<usize>,
+    content: String,
+    arguments: Value,
+    result: Option<ToolResult>,
+    status: ToolStatus,
+    call_id: String,
+}
+
+impl ToNormalizedEntry for UserInputRequestState {
+    fn to_normalized_entry(&self) -> NormalizedEntry {
+        NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::ToolUse {
+                tool_name: "question".to_string(),
+                action_type: ActionType::Tool {
+                    tool_name: "question".to_string(),
+                    arguments: Some(self.arguments.clone()),
+                    result: self.result.clone(),
+                },
+                status: self.status.clone(),
+            },
+            content: self.content.clone(),
+            metadata: serde_json::to_value(ToolCallMetadata {
+                tool_call_id: self.call_id.clone(),
+            })
+            .ok(),
         }
     }
 }
@@ -324,8 +389,10 @@ struct LogState {
     thinking: Option<StreamingText>,
     commands: HashMap<String, CommandState>,
     mcp_tools: HashMap<String, McpToolState>,
+    dynamic_tools: HashMap<String, DynamicToolState>,
     patches: HashMap<String, PatchState>,
     web_searches: HashMap<String, WebSearchState>,
+    user_input_requests: HashMap<String, UserInputRequestState>,
     token_usage_info: Option<TokenUsageInfo>,
 }
 
@@ -342,8 +409,10 @@ impl LogState {
             thinking: None,
             commands: HashMap::new(),
             mcp_tools: HashMap::new(),
+            dynamic_tools: HashMap::new(),
             patches: HashMap::new(),
             web_searches: HashMap::new(),
+            user_input_requests: HashMap::new(),
             token_usage_info: None,
         }
     }
@@ -459,6 +528,284 @@ fn normalize_file_changes(
         .collect()
 }
 
+fn app_command_status_to_tool_status(status: &AppCommandExecutionStatus) -> ToolStatus {
+    match status {
+        AppCommandExecutionStatus::InProgress => ToolStatus::Created,
+        AppCommandExecutionStatus::Completed => ToolStatus::Success,
+        AppCommandExecutionStatus::Failed => ToolStatus::Failed,
+        AppCommandExecutionStatus::Declined => ToolStatus::Denied { reason: None },
+    }
+}
+
+fn app_dynamic_tool_status_to_tool_status(status: &AppDynamicToolCallStatus) -> ToolStatus {
+    match status {
+        AppDynamicToolCallStatus::InProgress => ToolStatus::Created,
+        AppDynamicToolCallStatus::Completed => ToolStatus::Success,
+        AppDynamicToolCallStatus::Failed => ToolStatus::Failed,
+    }
+}
+
+fn question_request_content(questions: &[ToolRequestUserInputQuestion]) -> String {
+    questions
+        .iter()
+        .map(|question| question.question.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn upsert_question_request_state(
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+    call_id: String,
+    questions: &[ToolRequestUserInputQuestion],
+) {
+    let question_state =
+        state
+            .user_input_requests
+            .entry(call_id.clone())
+            .or_insert(UserInputRequestState {
+                index: None,
+                content: question_request_content(questions),
+                arguments: serde_json::to_value(questions).unwrap_or(Value::Null),
+                result: None,
+                status: ToolStatus::Created,
+                call_id,
+            });
+    let index = question_state.index.unwrap_or_else(|| {
+        add_normalized_entry(msg_store, entry_index, question_state.to_normalized_entry())
+    });
+    question_state.index = Some(index);
+    replace_normalized_entry(msg_store, index, question_state.to_normalized_entry());
+}
+
+fn upsert_dynamic_tool_state(
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+    call_id: String,
+    tool: String,
+    arguments: Value,
+    status: ToolStatus,
+    result: Option<ToolResult>,
+) {
+    let dynamic_state = state
+        .dynamic_tools
+        .entry(call_id.clone())
+        .or_insert(DynamicToolState {
+            index: None,
+            tool,
+            arguments,
+            result: None,
+            status: ToolStatus::Created,
+            call_id,
+        });
+    dynamic_state.status = status;
+    dynamic_state.result = result;
+    let index = dynamic_state.index.unwrap_or_else(|| {
+        add_normalized_entry(msg_store, entry_index, dynamic_state.to_normalized_entry())
+    });
+    dynamic_state.index = Some(index);
+    replace_normalized_entry(msg_store, index, dynamic_state.to_normalized_entry());
+}
+
+fn handle_direct_item_started(
+    notification: AppItemStartedNotification,
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+) {
+    state.assistant = None;
+    state.thinking = None;
+
+    match notification.item {
+        AppThreadItem::CommandExecution { id, command, .. } => {
+            let mut command_state = state.commands.remove(&id).unwrap_or_default();
+            command_state.command = command;
+            command_state.status = ToolStatus::Created;
+            command_state.awaiting_approval = false;
+            command_state.call_id = id.clone();
+            let index = command_state.index.unwrap_or_else(|| {
+                add_normalized_entry(msg_store, entry_index, command_state.to_normalized_entry())
+            });
+            command_state.index = Some(index);
+            replace_normalized_entry(msg_store, index, command_state.to_normalized_entry());
+            state.commands.insert(id, command_state);
+        }
+        AppThreadItem::DynamicToolCall {
+            id,
+            tool,
+            arguments,
+            ..
+        } => {
+            upsert_dynamic_tool_state(
+                state,
+                msg_store,
+                entry_index,
+                id,
+                tool,
+                arguments,
+                ToolStatus::Created,
+                None,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn handle_direct_item_completed(
+    notification: AppItemCompletedNotification,
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+) {
+    match notification.item {
+        AppThreadItem::AgentMessage { text, .. } => {
+            state.thinking = None;
+            let (entry, index, is_new) = state.assistant_message(text);
+            upsert_normalized_entry(msg_store, index, entry, is_new);
+            state.assistant = None;
+        }
+        AppThreadItem::Reasoning { summary, .. } => {
+            if !summary.is_empty() {
+                state.assistant = None;
+                let (entry, index, is_new) = state.thinking(summary.join("\n\n"));
+                upsert_normalized_entry(msg_store, index, entry, is_new);
+                state.thinking = None;
+            }
+        }
+        AppThreadItem::CommandExecution {
+            id,
+            aggregated_output,
+            exit_code,
+            status,
+            ..
+        } => {
+            if let Some(mut command_state) = state.commands.remove(&id) {
+                command_state.formatted_output = aggregated_output.map(Into::into);
+                command_state.exit_code = exit_code;
+                command_state.awaiting_approval = false;
+                command_state.status = app_command_status_to_tool_status(&status);
+                if let Some(index) = command_state.index {
+                    replace_normalized_entry(
+                        msg_store,
+                        index,
+                        command_state.to_normalized_entry(),
+                    );
+                }
+            }
+        }
+        AppThreadItem::DynamicToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            content_items,
+            success,
+            ..
+        } => {
+            let tool_status = match success {
+                Some(false) => ToolStatus::Failed,
+                _ => app_dynamic_tool_status_to_tool_status(&status),
+            };
+            let result = content_items.map(|items| {
+                ToolResult::json(serde_json::to_value(items).unwrap_or(Value::Null))
+            });
+            upsert_dynamic_tool_state(
+                state,
+                msg_store,
+                entry_index,
+                id,
+                tool,
+                arguments,
+                tool_status,
+                result,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn handle_direct_request(
+    request: ServerRequest,
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+) -> bool {
+    match request {
+        ServerRequest::ToolRequestUserInput { params, .. } => {
+            upsert_question_request_state(
+                state,
+                msg_store,
+                entry_index,
+                params.item_id,
+                &params.questions,
+            );
+            true
+        }
+        ServerRequest::DynamicToolCall { params, .. } => {
+            upsert_dynamic_tool_state(
+                state,
+                msg_store,
+                entry_index,
+                params.call_id,
+                params.tool,
+                params.arguments,
+                ToolStatus::Created,
+                None,
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_direct_notification(
+    notification: ServerNotification,
+    state: &mut LogState,
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+) -> bool {
+    match notification {
+        ServerNotification::ThreadStarted(notification) => {
+            msg_store.push_session_id(notification.thread.id);
+            true
+        }
+        ServerNotification::AgentMessageDelta(notification) => {
+            state.thinking = None;
+            let (entry, index, is_new) = state.assistant_message_append(notification.delta);
+            upsert_normalized_entry(msg_store, index, entry, is_new);
+            true
+        }
+        ServerNotification::ReasoningSummaryTextDelta(notification) => {
+            state.assistant = None;
+            let (entry, index, is_new) = state.thinking_append(notification.delta);
+            upsert_normalized_entry(msg_store, index, entry, is_new);
+            true
+        }
+        ServerNotification::CommandExecutionOutputDelta(
+            CommandExecutionOutputDeltaNotification { item_id, delta, .. },
+        ) => {
+            if let Some(command_state) = state.commands.get_mut(&item_id) {
+                command_state.stdout.push_str(&delta);
+                if let Some(index) = command_state.index {
+                    replace_normalized_entry(msg_store, index, command_state.to_normalized_entry());
+                }
+            }
+            true
+        }
+        ServerNotification::ItemStarted(notification) => {
+            handle_direct_item_started(notification, state, msg_store, entry_index);
+            true
+        }
+        ServerNotification::ItemCompleted(notification) => {
+            handle_direct_item_completed(notification, state, msg_store, entry_index);
+            true
+        }
+        _ => false,
+    }
+}
+
 fn format_todo_status(status: &StepStatus) -> String {
     match status {
         StepStatus::Pending => "pending",
@@ -495,26 +842,22 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 continue;
             }
 
-            if let Ok(server_notification) = serde_json::from_str::<ServerNotification>(&line) {
-                if let ServerNotification::SessionConfigured(session_configured) =
-                    server_notification
-                {
-                    msg_store.push_session_id(session_configured.session_id.to_string());
-                    handle_model_params(
-                        session_configured.model,
-                        session_configured.reasoning_effort,
-                        &msg_store,
-                        &entry_index,
-                    );
-                };
-                continue;
-            } else if let Some(session_id) = line
-                .strip_prefix(r#"{"method":"sessionConfigured","params":{"sessionId":""#)
-                .and_then(|suffix| SESSION_ID.captures(suffix).and_then(|caps| caps.get(1)))
+            if let Ok(server_notification) = serde_json::from_str::<ServerNotification>(&line)
+                && handle_direct_notification(
+                    server_notification,
+                    &mut state,
+                    &msg_store,
+                    &entry_index,
+                )
             {
-                // Best-effort extraction of session ID from logs in case the JSON parsing fails.
-                // This could happen if the line is truncated due to size limits because it includes the full session history.
-                msg_store.push_session_id(session_id.as_str().to_string());
+                continue;
+            }
+
+            if let Some(server_request) = serde_json::from_str::<JSONRPCRequest>(&line)
+                .ok()
+                .and_then(|request| ServerRequest::try_from(request).ok())
+            && handle_direct_request(server_request, &mut state, &msg_store, &entry_index)
+            {
                 continue;
             }
 
@@ -522,6 +865,16 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
+
+            if notification.method == "thread/started" {
+                if let Some(params) = notification
+                    .params
+                    .and_then(|p| serde_json::from_value::<ThreadStartedNotification>(p).ok())
+                {
+                    msg_store.push_session_id(params.thread.id);
+                }
+                continue;
+            }
 
             if !notification.method.starts_with("codex/event") {
                 continue;
@@ -555,7 +908,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     let (entry, index, is_new) = state.thinking_append(delta);
                     upsert_normalized_entry(&msg_store, index, entry, is_new);
                 }
-                EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                EventMsg::AgentMessage(AgentMessageEvent { message, .. }) => {
                     state.thinking = None;
                     let (entry, index, is_new) = state.assistant_message(message);
                     upsert_normalized_entry(&msg_store, index, entry, is_new);
@@ -582,6 +935,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     reason,
                     parsed_cmd: _,
                     proposed_execpolicy_amendment: _,
+                    ..
                 }) => {
                     state.assistant = None;
                     state.thinking = None;
@@ -719,6 +1073,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     duration: _,
                     formatted_output,
                     process_id: _,
+                    ..
                 }) => {
                     if let Some(mut command_state) = state.commands.remove(&call_id) {
                         command_state.set_formatted_output(formatted_output);
@@ -755,6 +1110,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 EventMsg::StreamError(StreamErrorEvent {
                     message,
                     codex_error_info,
+                    ..
                 }) => {
                     add_normalized_entry(
                         &msg_store,
@@ -772,6 +1128,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
                     call_id,
                     invocation,
+                    ..
                 }) => {
                     state.assistant = None;
                     state.thinking = None;
@@ -803,38 +1160,12 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                                 } else {
                                     ToolStatus::Success
                                 };
-                                if value
-                                    .content
-                                    .iter()
-                                    .all(|block| matches!(block, ContentBlock::TextContent(_)))
-                                {
-                                    mcp_tool_state.result = Some(ToolResult {
-                                        r#type: ToolResultValueType::Markdown,
-                                        value: Value::String(
-                                            value
-                                                .content
-                                                .iter()
-                                                .map(|block| {
-                                                    if let ContentBlock::TextContent(content) =
-                                                        block
-                                                    {
-                                                        content.text.clone()
-                                                    } else {
-                                                        unreachable!()
-                                                    }
-                                                })
-                                                .collect::<Vec<String>>()
-                                                .join("\n"),
-                                        ),
-                                    });
-                                } else {
-                                    mcp_tool_state.result = Some(ToolResult {
-                                        r#type: ToolResultValueType::Json,
-                                        value: value.structured_content.unwrap_or_else(|| {
-                                            serde_json::to_value(value.content).unwrap_or_default()
-                                        }),
-                                    });
-                                }
+                                mcp_tool_state.result = Some(ToolResult {
+                                    r#type: ToolResultValueType::Json,
+                                    value: value.structured_content.unwrap_or_else(|| {
+                                        serde_json::to_value(value.content).unwrap_or_default()
+                                    }),
+                                });
                             }
                             Err(err) => {
                                 mcp_tool_state.status = ToolStatus::Failed;
@@ -962,7 +1293,9 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     let index = add_normalized_entry(&msg_store, &entry_index, normalized_entry);
                     web_search_state.index = Some(index);
                 }
-                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query }) => {
+                EventMsg::WebSearchEnd(WebSearchEndEvent {
+                    call_id, query, ..
+                }) => {
                     state.assistant = None;
                     state.thinking = None;
                     if let Some(mut entry) = state.web_searches.remove(&call_id) {
@@ -1088,7 +1421,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 }
                 EventMsg::AgentReasoningRawContent(..)
                 | EventMsg::AgentReasoningRawContentDelta(..)
-                | EventMsg::TaskStarted(..)
+                | EventMsg::TurnStarted(..)
                 | EventMsg::UserMessage(..)
                 | EventMsg::TurnDiff(..)
                 | EventMsg::GetHistoryEntryResponse(..)
@@ -1104,14 +1437,14 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 | EventMsg::AgentMessageContentDelta(..)
                 | EventMsg::ReasoningContentDelta(..)
                 | EventMsg::ReasoningRawContentDelta(..)
-                | EventMsg::ListCustomPromptsResponse(..)
                 | EventMsg::TurnAborted(..)
                 | EventMsg::ShutdownComplete
                 | EventMsg::EnteredReviewMode(..)
                 | EventMsg::ExitedReviewMode(..)
                 | EventMsg::TerminalInteraction(..)
                 | EventMsg::ElicitationRequest(..)
-                | EventMsg::TaskComplete(..) => {}
+                | EventMsg::TurnComplete(..) => {}
+                _ => {}
             }
         }
     });
@@ -1122,22 +1455,26 @@ fn handle_jsonrpc_response(
     msg_store: &Arc<MsgStore>,
     entry_index: &EntryIndexProvider,
 ) {
-    let Ok(response) = serde_json::from_value::<NewConversationResponse>(response.result.clone())
-    else {
+    if let Ok(response) = serde_json::from_value::<ThreadStartResponse>(response.result.clone()) {
+        msg_store.push_session_id(response.thread.id);
+        handle_model_params(
+            response.model,
+            response.reasoning_effort,
+            msg_store,
+            entry_index,
+        );
         return;
-    };
-
-    match SessionHandler::extract_session_id_from_rollout_path(response.rollout_path) {
-        Ok(session_id) => msg_store.push_session_id(session_id),
-        Err(err) => tracing::error!("failed to extract session id: {err}"),
     }
 
-    handle_model_params(
-        response.model,
-        response.reasoning_effort,
-        msg_store,
-        entry_index,
-    );
+    if let Ok(response) = serde_json::from_value::<ThreadForkResponse>(response.result.clone()) {
+        msg_store.push_session_id(response.thread.id);
+        handle_model_params(
+            response.model,
+            response.reasoning_effort,
+            msg_store,
+            entry_index,
+        );
+    }
 }
 
 fn handle_model_params(
@@ -1179,11 +1516,6 @@ fn build_command_output(stdout: Option<String>, stderr: Option<String>) -> Optio
         Some(sections.join("\n\n"))
     }
 }
-
-static SESSION_ID: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"#)
-        .expect("valid regex")
-});
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Error {
@@ -1306,9 +1638,10 @@ mod tests {
     use codex_app_server_protocol::JSONRPCNotification;
     use codex_protocol::protocol::{
         EventMsg, ExecCommandBeginEvent, ExecCommandEndEvent, ExecCommandOutputDeltaEvent,
-        ExecCommandSource,
+        ExecCommandSource, ExecCommandStatus,
     };
     use crate::logs::utils::patch::extract_normalized_entry_from_patch;
+    use serde_json::json;
     use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
     use super::{
@@ -1405,6 +1738,14 @@ mod tests {
         )
     }
 
+    fn direct_notification_line(value: serde_json::Value) -> String {
+        format!("{}\n", serde_json::to_string(&value).unwrap())
+    }
+
+    fn direct_request_line(value: serde_json::Value) -> String {
+        format!("{}\n", serde_json::to_string(&value).unwrap())
+    }
+
     #[tokio::test]
     async fn command_output_deltas_only_emit_begin_and_final_summary_patches() {
         let msg_store = Arc::new(MsgStore::new());
@@ -1415,7 +1756,7 @@ mod tests {
                 process_id: None,
                 turn_id: "turn-1".to_string(),
                 command: vec!["npm".to_string(), "run".to_string(), "dev".to_string()],
-                cwd: PathBuf::from("/tmp/worktree"),
+                cwd: "/tmp/worktree".try_into().unwrap(),
                 parsed_cmd: Vec::new(),
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
@@ -1438,7 +1779,7 @@ mod tests {
                 process_id: None,
                 turn_id: "turn-1".to_string(),
                 command: vec!["npm".to_string(), "run".to_string(), "dev".to_string()],
-                cwd: PathBuf::from("/tmp/worktree"),
+                cwd: "/tmp/worktree".try_into().unwrap(),
                 parsed_cmd: Vec::new(),
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
@@ -1448,6 +1789,7 @@ mod tests {
                 exit_code: 0,
                 duration: Duration::from_secs(1),
                 formatted_output: "stdout:\nfirstsecondthird".to_string(),
+                status: ExecCommandStatus::Completed,
             },
         )));
         msg_store.push_finished();
@@ -1501,5 +1843,143 @@ mod tests {
             .unwrap();
 
         assert!(output.contains("firstsecondthird"));
+    }
+
+    #[tokio::test]
+    async fn direct_item_completed_agent_message_emits_assistant_entry() {
+        let msg_store = Arc::new(MsgStore::new());
+        msg_store.push_stdout(direct_notification_line(json!({
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "msg-1",
+                    "text": "/projects/workspace-linkease-ubuntu/linkease-github/vibe-kanban"
+                }
+            }
+        })));
+        msg_store.push_finished();
+
+        super::normalize_logs(msg_store.clone(), PathBuf::from("/tmp/worktree").as_path());
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let output = msg_store
+            .get_history()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                LogMsg::JsonPatch(patch) => extract_normalized_entry_from_patch(&patch).map(|(_, entry)| entry),
+                _ => None,
+            })
+            .find_map(|entry| match entry.entry_type {
+                NormalizedEntryType::AssistantMessage => Some(entry.content),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            output,
+            "/projects/workspace-linkease-ubuntu/linkease-github/vibe-kanban"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_request_user_input_emits_question_tool_entry() {
+        let msg_store = Arc::new(MsgStore::new());
+        msg_store.push_stdout(direct_request_line(json!({
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "question-1",
+                "questions": [{
+                    "id": "q1",
+                    "header": "Branch",
+                    "question": "Choose a branch",
+                    "options": [],
+                    "isOther": false,
+                    "isSecret": false
+                }]
+            }
+        })));
+        msg_store.push_finished();
+
+        super::normalize_logs(msg_store.clone(), PathBuf::from("/tmp/worktree").as_path());
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let entry = msg_store
+            .get_history()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                LogMsg::JsonPatch(patch) => {
+                    extract_normalized_entry_from_patch(&patch).map(|(_, entry)| entry)
+                }
+                _ => None,
+            })
+            .find(|entry| entry.content.contains("Choose a branch"))
+            .unwrap();
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, .. } => assert_eq!(tool_name, "question"),
+            other => panic!("unexpected entry type: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_dynamic_tool_completion_emits_tool_result() {
+        let msg_store = Arc::new(MsgStore::new());
+        msg_store.push_stdout(direct_notification_line(json!({
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "item": {
+                    "type": "dynamicToolCall",
+                    "id": "dynamic-1",
+                    "tool": "custom.lookup",
+                    "arguments": { "query": "abc" },
+                    "status": "completed",
+                    "success": true,
+                    "contentItems": [
+                        {
+                            "type": "inputText",
+                            "text": "ok"
+                        }
+                    ]
+                }
+            }
+        })));
+        msg_store.push_finished();
+
+        super::normalize_logs(msg_store.clone(), PathBuf::from("/tmp/worktree").as_path());
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let entry = msg_store
+            .get_history()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                LogMsg::JsonPatch(patch) => {
+                    extract_normalized_entry_from_patch(&patch).map(|(_, entry)| entry)
+                }
+                _ => None,
+            })
+            .find(|entry| entry.content == "custom.lookup")
+            .unwrap();
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::Tool { result: Some(result), .. },
+                ..
+            } => assert_eq!(
+                result.value,
+                json!([{ "type": "inputText", "text": "ok" }])
+            ),
+            other => panic!("unexpected entry type: {other:?}"),
+        }
     }
 }

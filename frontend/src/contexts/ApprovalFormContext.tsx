@@ -9,6 +9,7 @@ import {
 interface ApprovalFormState {
   isEnteringReason: boolean;
   denyReason: string;
+  questionAnswers: Record<string, string>;
 }
 
 interface ApprovalFormStateMap {
@@ -26,6 +27,7 @@ const ApprovalFormContext = createContext<ApprovalFormContextType | null>(null);
 const defaultState: ApprovalFormState = {
   isEnteringReason: false,
   denyReason: '',
+  questionAnswers: {},
 };
 
 export function useApprovalForm(approvalId: string) {
@@ -52,11 +54,24 @@ export function useApprovalForm(approvalId: string) {
     [approvalId, context]
   );
 
+  const setQuestionAnswer = useCallback(
+    (questionId: string, value: string) =>
+      context.setState(approvalId, {
+        questionAnswers: {
+          ...state.questionAnswers,
+          [questionId]: value,
+        },
+      }),
+    [approvalId, context, state.questionAnswers]
+  );
+
   return {
     isEnteringReason: state.isEnteringReason,
     denyReason: state.denyReason,
+    questionAnswers: state.questionAnswers,
     setIsEnteringReason,
     setDenyReason,
+    setQuestionAnswer,
     clear,
   };
 }

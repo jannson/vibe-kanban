@@ -4,15 +4,17 @@ pub mod normalize_logs;
 pub mod session;
 use std::{
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use async_trait::async_trait;
-use codex_app_server_protocol::NewConversationParams;
-use codex_protocol::{
-    config_types::SandboxMode as CodexSandboxMode, protocol::AskForApproval as CodexAskForApproval,
+use codex_app_server_protocol::{
+    AskForApproval as V2AskForApproval, SandboxMode as V2SandboxMode, ThreadForkParams,
+    ThreadStartParams, UserInput,
 };
+use codex_protocol::config_types::ServiceTier;
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
 use schemars::JsonSchema;
@@ -27,7 +29,6 @@ use self::{
     client::{AppServerClient, LogWriter},
     jsonrpc::JsonRpcPeer,
     normalize_logs::normalize_logs,
-    session::SessionHandler,
 };
 use crate::{
     approvals::ExecutorApprovalService,
@@ -40,6 +41,39 @@ use crate::{
     },
     stdout_dup::create_stdout_pipe_writer,
 };
+
+pub(crate) fn resolve_model(model: Option<&str>) -> (Option<&str>, bool) {
+    match model.and_then(|m| m.strip_suffix("-fast")) {
+        Some(base) => (Some(base), true),
+        None => (model, false),
+    }
+}
+
+pub(crate) fn codex_home() -> Option<PathBuf> {
+    if let Ok(codex_home) = env::var("CODEX_HOME")
+        && !codex_home.trim().is_empty()
+    {
+        return Some(PathBuf::from(codex_home));
+    }
+
+    dirs::home_dir().map(|home| home.join(".codex"))
+}
+
+pub(crate) fn fork_params_from(thread_id: String, params: ThreadStartParams) -> ThreadForkParams {
+    ThreadForkParams {
+        thread_id,
+        model: params.model,
+        model_provider: params.model_provider,
+        cwd: params.cwd,
+        approval_policy: params.approval_policy,
+        sandbox: params.sandbox,
+        config: params.config,
+        base_instructions: params.base_instructions,
+        developer_instructions: params.developer_instructions,
+        service_tier: params.service_tier,
+        ..Default::default()
+    }
+}
 
 /// Sandbox policy modes for Codex
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, JsonSchema, AsRefStr)]
@@ -133,6 +167,8 @@ pub struct Codex {
     pub compact_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub developer_instructions: Option<String>,
+    #[serde(default)]
+    pub plan: bool,
     #[serde(flatten)]
     pub cmd: CmdOverrides,
 
@@ -176,12 +212,12 @@ impl StandardCodingAgentExecutor for Codex {
     }
 
     fn default_mcp_config_path(&self) -> Option<PathBuf> {
-        dirs::home_dir().map(|home| home.join(".codex").join("config.toml"))
+        codex_home().map(|home| home.join("config.toml"))
     }
 
     fn get_availability_info(&self) -> AvailabilityInfo {
-        if let Some(timestamp) = dirs::home_dir()
-            .and_then(|home| std::fs::metadata(home.join(".codex").join("auth.json")).ok())
+        if let Some(timestamp) = codex_home()
+            .and_then(|home| std::fs::metadata(home.join("auth.json")).ok())
             .and_then(|m| m.modified().ok())
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
@@ -196,8 +232,8 @@ impl StandardCodingAgentExecutor for Codex {
             .map(|p| p.exists())
             .unwrap_or(false);
 
-        let installation_indicator_found = dirs::home_dir()
-            .map(|home| home.join(".codex").join("version.json").exists())
+        let installation_indicator_found = codex_home()
+            .map(|home| home.join("version.json").exists())
             .unwrap_or(false);
 
         if mcp_config_found || installation_indicator_found {
@@ -210,7 +246,7 @@ impl StandardCodingAgentExecutor for Codex {
 
 impl Codex {
     pub fn base_command() -> &'static str {
-        "npx -y @openai/codex@0.77.0"
+        "npx -y @openai/codex@0.124.0"
     }
 
     fn build_command_builder(&self) -> CommandBuilder {
@@ -223,38 +259,71 @@ impl Codex {
         apply_overrides(builder, &self.cmd)
     }
 
-    fn build_new_conversation_params(&self, cwd: &Path) -> NewConversationParams {
+    fn build_thread_start_params(&self, cwd: &Path) -> ThreadStartParams {
         let sandbox = match self.sandbox.as_ref() {
-            None | Some(SandboxMode::Auto) => Some(CodexSandboxMode::WorkspaceWrite), // match the Auto preset in codex
-            Some(SandboxMode::ReadOnly) => Some(CodexSandboxMode::ReadOnly),
-            Some(SandboxMode::WorkspaceWrite) => Some(CodexSandboxMode::WorkspaceWrite),
-            Some(SandboxMode::DangerFullAccess) => Some(CodexSandboxMode::DangerFullAccess),
+            None | Some(SandboxMode::Auto) => Some(V2SandboxMode::WorkspaceWrite),
+            Some(SandboxMode::ReadOnly) => Some(V2SandboxMode::ReadOnly),
+            Some(SandboxMode::WorkspaceWrite) => Some(V2SandboxMode::WorkspaceWrite),
+            Some(SandboxMode::DangerFullAccess) => Some(V2SandboxMode::DangerFullAccess),
         };
 
         let approval_policy = match self.ask_for_approval.as_ref() {
             None if matches!(self.sandbox.as_ref(), None | Some(SandboxMode::Auto)) => {
-                // match the Auto preset in codex
-                Some(CodexAskForApproval::OnRequest)
+                Some(V2AskForApproval::OnRequest)
             }
             None => None,
-            Some(AskForApproval::UnlessTrusted) => Some(CodexAskForApproval::UnlessTrusted),
-            Some(AskForApproval::OnFailure) => Some(CodexAskForApproval::OnFailure),
-            Some(AskForApproval::OnRequest) => Some(CodexAskForApproval::OnRequest),
-            Some(AskForApproval::Never) => Some(CodexAskForApproval::Never),
+            Some(AskForApproval::UnlessTrusted) => Some(V2AskForApproval::UnlessTrusted),
+            Some(AskForApproval::OnFailure) => Some(V2AskForApproval::OnFailure),
+            Some(AskForApproval::OnRequest) => Some(V2AskForApproval::OnRequest),
+            Some(AskForApproval::Never) => Some(V2AskForApproval::Never),
         };
 
-        NewConversationParams {
-            model: self.model.clone(),
-            profile: self.profile.clone(),
+        let mut config = self.build_config_overrides();
+        if let Some(profile) = &self.profile {
+            config
+                .get_or_insert_with(HashMap::new)
+                .insert("profile".to_string(), Value::String(profile.clone()));
+        }
+        if let Some(include) = self.include_apply_patch_tool {
+            config
+                .get_or_insert_with(HashMap::new)
+                .insert("include_apply_patch_tool".to_string(), Value::Bool(include));
+        }
+        if let Some(compact) = &self.compact_prompt {
+            config
+                .get_or_insert_with(HashMap::new)
+                .insert("compact_prompt".to_string(), Value::String(compact.clone()));
+        }
+        if !matches!(approval_policy, None | Some(V2AskForApproval::Never)) {
+            let config = config.get_or_insert_with(HashMap::new);
+            config.insert(
+                "suppress_unstable_features_warning".to_string(),
+                Value::Bool(true),
+            );
+            config.insert(
+                "features.default_mode_request_user_input".to_string(),
+                Value::Bool(true),
+            );
+        }
+
+        let (model, is_fast) = resolve_model(self.model.as_deref());
+        let service_tier = if is_fast {
+            Some(Some(ServiceTier::Fast))
+        } else {
+            None
+        };
+
+        ThreadStartParams {
+            model: model.map(|m| m.to_string()),
             cwd: Some(cwd.to_string_lossy().to_string()),
             approval_policy,
             sandbox,
-            config: self.build_config_overrides(),
+            config,
             base_instructions: self.base_instructions.clone(),
-            include_apply_patch_tool: self.include_apply_patch_tool,
             model_provider: self.model_provider.clone(),
-            compact_prompt: self.compact_prompt.clone(),
             developer_instructions: self.developer_instructions.clone(),
+            service_tier,
+            ..Default::default()
         }
     }
 
@@ -300,6 +369,7 @@ impl Codex {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
+        let thread_start_params = self.build_thread_start_params(current_dir);
         let (program_path, args) = command_parts.into_resolved().await?;
 
         let mut process = Command::new(program_path);
@@ -330,18 +400,18 @@ impl Codex {
         let new_stdout = create_stdout_pipe_writer(&mut child)?;
         let (exit_signal_tx, exit_signal_rx) = tokio::sync::oneshot::channel();
 
-        let params = self.build_new_conversation_params(current_dir);
         let resume_session = resume_session.map(|s| s.to_string());
         let auto_approve = matches!(
             (&self.sandbox, &self.ask_for_approval),
             (Some(SandboxMode::DangerFullAccess), None)
         );
         let approvals = self.approvals.clone();
+        let plan_mode = self.plan;
         tokio::spawn(async move {
             let exit_signal_tx = ExitSignalSender::new(exit_signal_tx);
             let log_writer = LogWriter::new(new_stdout);
             if let Err(err) = Self::launch_codex_app_server(
-                params,
+                thread_start_params,
                 resume_session,
                 combined_prompt,
                 child_stdout,
@@ -350,6 +420,7 @@ impl Codex {
                 exit_signal_tx.clone(),
                 approvals,
                 auto_approve,
+                plan_mode,
             )
             .await
             {
@@ -395,7 +466,7 @@ impl Codex {
 
     #[allow(clippy::too_many_arguments)]
     async fn launch_codex_app_server(
-        conversation_params: NewConversationParams,
+        thread_start_params: ThreadStartParams,
         resume_session: Option<String>,
         combined_prompt: String,
         child_stdout: tokio::process::ChildStdout,
@@ -404,50 +475,114 @@ impl Codex {
         exit_signal_tx: ExitSignalSender,
         approvals: Option<Arc<dyn ExecutorApprovalService>>,
         auto_approve: bool,
+        plan_mode: bool,
     ) -> Result<(), ExecutorError> {
-        let client = AppServerClient::new(log_writer, approvals, auto_approve);
+        let client = AppServerClient::new(log_writer, approvals, auto_approve, plan_mode);
         let rpc_peer =
             JsonRpcPeer::spawn(child_stdin, child_stdout, client.clone(), exit_signal_tx);
         client.connect(rpc_peer);
         client.initialize().await?;
-        let auth_status = client.get_auth_status().await?;
-        if auth_status.requires_openai_auth.unwrap_or(true) && auth_status.auth_method.is_none() {
+        let account = client.get_account().await?;
+        if account.requires_openai_auth && account.account.is_none() {
             return Err(ExecutorError::AuthRequired(
                 "Codex authentication required".to_string(),
             ));
         }
-        match resume_session {
+        let (thread_id, resolved_model) = match resume_session {
             None => {
-                let params = conversation_params;
-                let response = client.new_conversation(params).await?;
-                let conversation_id = response.conversation_id;
-                client.register_session(&conversation_id).await?;
-                client.add_conversation_listener(conversation_id).await?;
-                client
-                    .send_user_message(conversation_id, combined_prompt)
-                    .await?;
+                let response = client.thread_start(thread_start_params).await?;
+                (response.thread.id, response.model)
             }
             Some(session_id) => {
-                let (rollout_path, _forked_session_id) =
-                    SessionHandler::fork_rollout_file(&session_id)
-                        .map_err(|e| ExecutorError::FollowUpNotSupported(e.to_string()))?;
-                let overrides = conversation_params;
                 let response = client
-                    .resume_conversation(rollout_path.clone(), overrides)
+                    .thread_fork(fork_params_from(session_id, thread_start_params))
                     .await?;
-                tracing::debug!(
-                    "resuming session using rollout file {}, response {:?}",
-                    rollout_path.display(),
-                    response
-                );
-                let conversation_id = response.conversation_id;
-                client.register_session(&conversation_id).await?;
-                client.add_conversation_listener(conversation_id).await?;
-                client
-                    .send_user_message(conversation_id, combined_prompt)
-                    .await?;
+                tracing::debug!("forked thread, new thread_id={}", response.thread.id);
+                (response.thread.id, response.model)
             }
-        }
+        };
+        client.set_resolved_model(resolved_model);
+        client.register_session(&thread_id).await?;
+        let collaboration_mode = client.initial_collaboration_mode()?;
+        client
+            .turn_start_with_mode(
+                thread_id,
+                vec![UserInput::Text {
+                    text: combined_prompt,
+                    text_elements: vec![],
+                }],
+                Some(collaboration_mode),
+            )
+            .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::Value;
+
+    use crate::{command::CmdOverrides, executors::AppendPrompt};
+
+    use super::{Codex, codex_home};
+
+    fn test_codex() -> Codex {
+        Codex {
+            append_prompt: AppendPrompt::default(),
+            sandbox: None,
+            ask_for_approval: None,
+            oss: None,
+            model: None,
+            model_reasoning_effort: None,
+            model_reasoning_summary: None,
+            model_reasoning_summary_format: None,
+            profile: None,
+            base_instructions: None,
+            include_apply_patch_tool: None,
+            model_provider: None,
+            compact_prompt: None,
+            developer_instructions: None,
+            plan: false,
+            cmd: CmdOverrides::default(),
+            approvals: None,
+        }
+    }
+
+    #[test]
+    fn base_command_tracks_current_codex_cli() {
+        assert_eq!(Codex::base_command(), "npx -y @openai/codex@0.124.0");
+    }
+
+    #[test]
+    fn codex_home_prefers_env_override() {
+        let original = std::env::var_os("CODEX_HOME");
+        let override_path = PathBuf::from("/tmp/vibe-kanban-codex-home-test");
+
+        unsafe {
+            std::env::set_var("CODEX_HOME", &override_path);
+        }
+
+        assert_eq!(codex_home(), Some(override_path.clone()));
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("CODEX_HOME", value) },
+            None => unsafe { std::env::remove_var("CODEX_HOME") },
+        }
+    }
+
+    #[test]
+    fn build_thread_start_params_enables_question_requests() {
+        let mut codex = test_codex();
+        codex.ask_for_approval = Some(super::AskForApproval::UnlessTrusted);
+
+        let params = codex.build_thread_start_params(std::path::Path::new("/tmp"));
+        let config = params.config.expect("config overrides should be present");
+
+        assert_eq!(
+            config.get("features.default_mode_request_user_input"),
+            Some(&Value::Bool(true))
+        );
     }
 }

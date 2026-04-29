@@ -55,7 +55,9 @@ fn generate_types_content() -> String {
         db::models::merge::PrMerge::decl(),
         db::models::merge::MergeStatus::decl(),
         db::models::merge::PullRequestInfo::decl(),
-        utils::approvals::ApprovalStatus::decl(),
+        utils::approvals::QuestionAnswer::decl(),
+        utils::approvals::QuestionStatus::decl(),
+        utils::approvals::ApprovalOutcome::decl(),
         utils::approvals::CreateApprovalRequest::decl(),
         utils::approvals::ApprovalResponse::decl(),
         utils::diff::Diff::decl(),
@@ -332,6 +334,18 @@ fn schemas_up_to_date(schemas_path: &Path, schemas: &HashMap<&str, String>) -> b
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_types_content;
+
+    #[test]
+    fn shared_types_do_not_export_legacy_approval_status() {
+        let content = generate_types_content();
+
+        assert!(!content.contains("export type ApprovalStatus ="));
+    }
 }
 
 fn main() {

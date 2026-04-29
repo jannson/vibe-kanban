@@ -54,7 +54,37 @@ pub enum ApprovalStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+pub struct QuestionAnswer {
+    pub question: String,
+    pub answer: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum QuestionStatus {
+    Answered { answers: Vec<QuestionAnswer> },
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ApprovalOutcome {
+    Approved,
+    Denied {
+        #[ts(optional)]
+        reason: Option<String>,
+    },
+    Answered {
+        answers: Vec<QuestionAnswer>,
+    },
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ApprovalResponse {
     pub execution_process_id: Uuid,
-    pub status: ApprovalStatus,
+    pub status: ApprovalOutcome,
 }

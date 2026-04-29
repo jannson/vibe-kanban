@@ -19,7 +19,7 @@ use sqlx::{Error as SqlxError, SqlitePool};
 use thiserror::Error;
 use tokio::sync::{RwLock, oneshot};
 use utils::{
-    approvals::{ApprovalRequest, ApprovalResponse, ApprovalStatus},
+    approvals::{ApprovalOutcome, ApprovalRequest, ApprovalResponse},
     log_msg::LogMsg,
     msg_store::MsgStore,
 };
@@ -31,10 +31,11 @@ struct PendingApproval {
     entry: NormalizedEntry,
     execution_process_id: Uuid,
     tool_name: String,
-    response_tx: oneshot::Sender<ApprovalStatus>,
+    is_question: bool,
+    response_tx: oneshot::Sender<ApprovalOutcome>,
 }
 
-type ApprovalWaiter = Shared<BoxFuture<'static, ApprovalStatus>>;
+type ApprovalWaiter = Shared<BoxFuture<'static, ApprovalOutcome>>;
 
 #[derive(Debug)]
 pub struct ToolContext {
@@ -45,7 +46,7 @@ pub struct ToolContext {
 #[derive(Clone)]
 pub struct Approvals {
     pending: Arc<DashMap<String, PendingApproval>>,
-    completed: Arc<DashMap<String, ApprovalStatus>>,
+    completed: Arc<DashMap<String, ApprovalOutcome>>,
     msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
 }
 
@@ -77,10 +78,11 @@ impl Approvals {
     pub async fn create_with_waiter(
         &self,
         request: ApprovalRequest,
+        is_question: bool,
     ) -> Result<(ApprovalRequest, ApprovalWaiter), ApprovalError> {
         let (tx, rx) = oneshot::channel();
         let waiter: ApprovalWaiter = rx
-            .map(|result| result.unwrap_or(ApprovalStatus::TimedOut))
+            .map(|result| result.unwrap_or(ApprovalOutcome::TimedOut))
             .boxed()
             .shared();
         let req_id = request.id.clone();
@@ -106,6 +108,7 @@ impl Approvals {
                         entry: matching_tool,
                         execution_process_id: request.execution_process_id,
                         tool_name: request.tool_name.clone(),
+                        is_question,
                         response_tx: tx,
                     },
                 );
@@ -139,15 +142,41 @@ impl Approvals {
         pool: &SqlitePool,
         id: &str,
         req: ApprovalResponse,
-    ) -> Result<(ApprovalStatus, ToolContext), ApprovalError> {
+    ) -> Result<(ApprovalOutcome, ToolContext), ApprovalError> {
         if let Some((_, p)) = self.pending.remove(id) {
+            if p.is_question
+                && matches!(
+                    req.status,
+                    ApprovalOutcome::Approved | ApprovalOutcome::Denied { .. }
+                )
+            {
+                self.pending.insert(id.to_string(), p);
+                return Err(ApprovalError::Custom(anyhow::anyhow!(
+                    "question approval requires answered/timed_out outcome"
+                )));
+            }
+            if !p.is_question && matches!(req.status, ApprovalOutcome::Answered { .. }) {
+                self.pending.insert(id.to_string(), p);
+                return Err(ApprovalError::Custom(anyhow::anyhow!(
+                    "tool approval does not accept answered outcome"
+                )));
+            }
+
             self.completed.insert(id.to_string(), req.status.clone());
             let _ = p.response_tx.send(req.status.clone());
 
             if let Some(store) = self.msg_store_by_id(&p.execution_process_id).await {
-                let status = ToolStatus::from_approval_status(&req.status).ok_or(
-                    ApprovalError::Custom(anyhow::anyhow!("Invalid approval status")),
-                )?;
+                let status = match &req.status {
+                    ApprovalOutcome::Approved => Some(ToolStatus::Created),
+                    ApprovalOutcome::Denied { reason } => Some(ToolStatus::Denied {
+                        reason: reason.clone(),
+                    }),
+                    ApprovalOutcome::Answered { .. } => Some(ToolStatus::Success),
+                    ApprovalOutcome::TimedOut => Some(ToolStatus::TimedOut),
+                }
+                .ok_or(ApprovalError::Custom(anyhow::anyhow!(
+                    "Invalid approval status"
+                )))?;
                 let updated_entry = p
                     .entry
                     .with_tool_status(status)
@@ -166,11 +195,9 @@ impl Approvals {
                 execution_process_id: p.execution_process_id,
             };
 
-            // If approved or denied, and task is still InReview, move back to InProgress
-            if matches!(
-                req.status,
-                ApprovalStatus::Approved | ApprovalStatus::Denied { .. }
-            ) && let Ok(ctx) =
+            // Resume execution after any non-timeout response while the task is in review.
+            if should_resume_task_after_approval(&req.status)
+                && let Ok(ctx) =
                 ExecutionProcess::load_context(pool, tool_ctx.execution_process_id).await
                 && ctx.task.status == TaskStatus::InReview
                 && let Err(e) = Task::update_status(pool, ctx.task.id, TaskStatus::InProgress).await
@@ -211,10 +238,10 @@ impl Approvals {
                 biased;
 
                 resolved = waiter.clone() => resolved,
-                _ = tokio::time::sleep_until(deadline) => ApprovalStatus::TimedOut,
+                _ = tokio::time::sleep_until(deadline) => ApprovalOutcome::TimedOut,
             };
 
-            let is_timeout = matches!(&status, ApprovalStatus::TimedOut);
+            let is_timeout = matches!(&status, ApprovalOutcome::TimedOut);
             completed.insert(id.clone(), status.clone());
 
             if is_timeout && let Some((_, pending_approval)) = pending.remove(&id) {
@@ -228,9 +255,8 @@ impl Approvals {
                 };
 
                 if let Some(store) = store {
-                    if let Some(updated_entry) = pending_approval
-                        .entry
-                        .with_tool_status(ToolStatus::TimedOut)
+                    if let Some(updated_entry) =
+                        pending_approval.entry.with_tool_status(ToolStatus::TimedOut)
                     {
                         store.push_patch(ConversationPatch::replace(
                             pending_approval.entry_index,
@@ -256,6 +282,15 @@ impl Approvals {
         let map = self.msg_stores.read().await;
         map.get(execution_process_id).cloned()
     }
+}
+
+fn should_resume_task_after_approval(status: &ApprovalOutcome) -> bool {
+    matches!(
+        status,
+        ApprovalOutcome::Approved
+            | ApprovalOutcome::Denied { .. }
+            | ApprovalOutcome::Answered { .. }
+    )
 }
 
 pub(crate) async fn ensure_task_in_review(pool: &SqlitePool, execution_process_id: Uuid) {
@@ -313,6 +348,7 @@ mod tests {
     use std::sync::Arc;
 
     use executors::logs::{ActionType, NormalizedEntry, NormalizedEntryType, ToolStatus};
+    use utils::approvals::QuestionAnswer;
     use utils::msg_store::MsgStore;
 
     use super::*;
@@ -397,5 +433,15 @@ mod tests {
             find_matching_tool_use(store.clone(), "wrong-id").is_none(),
             "Should not match different tool ids"
         );
+    }
+
+    #[test]
+    fn answered_question_resumes_task_progress() {
+        assert!(should_resume_task_after_approval(&ApprovalOutcome::Answered {
+            answers: vec![QuestionAnswer {
+                question: "Pick one".to_string(),
+                answer: vec!["A".to_string()],
+            }],
+        }));
     }
 }

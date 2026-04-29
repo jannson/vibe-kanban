@@ -1,7 +1,7 @@
 // Import all necessary types from shared types
 
 import {
-  ApprovalStatus,
+  ApprovalOutcome,
   ApiResponse,
   Config,
   CreateFollowUpAttempt,
@@ -1150,7 +1150,7 @@ export const approvalsApi = {
     approvalId: string,
     payload: ApprovalResponse,
     signal?: AbortSignal
-  ): Promise<ApprovalStatus> => {
+  ): Promise<ApprovalOutcome> => {
     const res = await makeRequest(`/api/approvals/${approvalId}/respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1158,7 +1158,7 @@ export const approvalsApi = {
       signal,
     });
 
-    return handleApiResponse<ApprovalStatus>(res);
+    return handleApiResponse<ApprovalOutcome>(res);
   },
 };
 

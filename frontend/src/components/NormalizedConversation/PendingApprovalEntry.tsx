@@ -7,8 +7,13 @@ import {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { ApprovalStatus, ToolStatus } from 'shared/types';
+import type {
+  ApprovalOutcome,
+  NormalizedEntry,
+  ToolStatus,
+} from 'shared/types';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Tooltip,
   TooltipContent,
@@ -29,9 +34,24 @@ const DEFAULT_DENIAL_REASON = 'User denied this tool use request.';
 
 // ---------- Types ----------
 interface PendingApprovalEntryProps {
+  entry: NormalizedEntry;
   pendingStatus: Extract<ToolStatus, { status: 'pending_approval' }>;
   executionProcessId?: string;
   children: ReactNode;
+}
+
+interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+interface QuestionDefinition {
+  id: string;
+  header: string;
+  question: string;
+  isOther?: boolean;
+  isSecret?: boolean;
+  options?: QuestionOption[] | null;
 }
 
 function useApprovalCountdown(
@@ -167,8 +187,99 @@ function DenyReasonForm({
   );
 }
 
+function parseQuestionDefinitions(entry: NormalizedEntry): QuestionDefinition[] {
+  if (
+    entry.entry_type.type !== 'tool_use' ||
+    entry.entry_type.tool_name !== 'question' ||
+    entry.entry_type.action_type.action !== 'tool' ||
+    !entry.entry_type.action_type.arguments ||
+    !Array.isArray(entry.entry_type.action_type.arguments)
+  ) {
+    return [];
+  }
+
+  return entry.entry_type.action_type.arguments
+    .filter(
+      (value) =>
+        !!value &&
+        typeof value === 'object' &&
+        'id' in value &&
+        'question' in value
+    )
+    .map((value) => value as unknown as QuestionDefinition);
+}
+
+function QuestionAnswerForm({
+  questions,
+  answers,
+  isResponding,
+  onChange,
+  onSubmit,
+}: {
+  questions: QuestionDefinition[];
+  answers: Record<string, string>;
+  isResponding: boolean;
+  onChange: (questionId: string, value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      {questions.map((question) => {
+        const value = answers[question.id] ?? '';
+        return (
+          <div key={question.id} className="space-y-2">
+            <div className="space-y-1">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {question.header}
+              </div>
+              <div className="text-sm">{question.question}</div>
+            </div>
+            {!!question.options?.length && (
+              <div className="flex flex-wrap gap-2">
+                {question.options.map((option) => {
+                  const selected = value === option.label;
+                  return (
+                    <Button
+                      key={option.label}
+                      type="button"
+                      variant={selected ? 'default' : 'outline'}
+                      size="sm"
+                      disabled={isResponding}
+                      onClick={() => onChange(question.id, option.label)}
+                      title={option.description}
+                    >
+                      {option.label}
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
+            {(!question.options?.length || question.isOther) && (
+              <Input
+                type={question.isSecret ? 'password' : 'text'}
+                value={value}
+                disabled={isResponding}
+                placeholder={
+                  question.isSecret ? 'Enter a secret value' : 'Type your answer'
+                }
+                onChange={(event) => onChange(question.id, event.target.value)}
+              />
+            )}
+          </div>
+        );
+      })}
+      <div className="flex justify-end">
+        <Button size="sm" onClick={onSubmit} disabled={isResponding}>
+          Submit Answers
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Main Component ----------
 const PendingApprovalEntry = ({
+  entry,
   pendingStatus,
   executionProcessId,
   children,
@@ -180,12 +291,16 @@ const PendingApprovalEntry = ({
   const {
     isEnteringReason,
     denyReason,
+    questionAnswers,
     setIsEnteringReason,
     setDenyReason,
+    setQuestionAnswer,
     clear,
   } = useApprovalForm(pendingStatus.approval_id);
 
   const { projectId } = useProject();
+  const questionDefinitions = useMemo(() => parseQuestionDefinitions(entry), [entry]);
+  const isQuestionRequest = questionDefinitions.length > 0;
 
   const { enableScope, disableScope, activeScopes } = useHotkeysContext();
   const tabNav = useContext(TabNavContext);
@@ -241,7 +356,7 @@ const PendingApprovalEntry = ({
   ]);
 
   const respond = useCallback(
-    async (approved: boolean, reason?: string) => {
+    async (status: ApprovalOutcome) => {
       if (disabled) return;
       if (!executionProcessId) {
         setError('Missing executionProcessId');
@@ -250,10 +365,6 @@ const PendingApprovalEntry = ({
 
       setIsResponding(true);
       setError(null);
-
-      const status: ApprovalStatus = approved
-        ? { status: 'approved' }
-        : { status: 'denied', reason };
 
       try {
         await approvalsApi.respond(pendingStatus.approval_id, {
@@ -274,7 +385,10 @@ const PendingApprovalEntry = ({
     [disabled, executionProcessId, pendingStatus.approval_id, clear]
   );
 
-  const handleApprove = useCallback(() => respond(true), [respond]);
+  const handleApprove = useCallback(
+    () => respond({ status: 'approved' }),
+    [respond]
+  );
   const handleStartDeny = useCallback(() => {
     if (disabled) return;
     setError(null);
@@ -288,8 +402,34 @@ const PendingApprovalEntry = ({
 
   const handleSubmitDeny = useCallback(() => {
     const trimmed = denyReason.trim();
-    respond(false, trimmed || DEFAULT_DENIAL_REASON);
+    respond({
+      status: 'denied',
+      reason: trimmed || DEFAULT_DENIAL_REASON,
+    });
   }, [denyReason, respond]);
+
+  const handleSubmitAnswers = useCallback(() => {
+    const answers = questionDefinitions
+      .map((question) => {
+        const answer = (questionAnswers[question.id] ?? '').trim();
+        if (!answer) return null;
+        return {
+          question: question.question,
+          answer: [answer],
+        };
+      })
+      .filter((value): value is { question: string; answer: string[] } => !!value);
+
+    if (answers.length !== questionDefinitions.length) {
+      setError('Please answer every question before submitting.');
+      return;
+    }
+
+    respond({
+      status: 'answered',
+      answers,
+    });
+  }, [questionDefinitions, questionAnswers, respond]);
 
   const triggerDeny = useCallback(
     (event?: KeyboardEvent) => {
@@ -302,13 +442,13 @@ const PendingApprovalEntry = ({
 
   useKeyApproveRequest(handleApprove, {
     scope: Scope.APPROVALS,
-    when: () => shouldEnableApprovalsScope && !isEnteringReason,
+    when: () => shouldEnableApprovalsScope && !isEnteringReason && !isQuestionRequest,
     preventDefault: true,
   });
 
   useKeyDenyApproval(triggerDeny, {
     scope: Scope.APPROVALS,
-    when: () => shouldEnableApprovalsScope && !hasResponded,
+    when: () => shouldEnableApprovalsScope && !hasResponded && !isQuestionRequest,
     enableOnFormTags: ['textarea', 'TEXTAREA'],
     preventDefault: true,
   });
@@ -322,13 +462,18 @@ const PendingApprovalEntry = ({
           <TooltipProvider>
             <div className="flex items-center justify-between gap-1.5 pl-4">
               <div className="flex items-center gap-1.5">
-                {!isEnteringReason && (
+                {!isEnteringReason && !isQuestionRequest && (
                   <span className="text-muted-foreground">
                     Would you like to approve this?
                   </span>
                 )}
+                {isQuestionRequest && (
+                  <span className="text-muted-foreground">
+                    Answer the required question{questionDefinitions.length > 1 ? 's' : ''}.
+                  </span>
+                )}
               </div>
-              {!isEnteringReason && (
+              {!isEnteringReason && !isQuestionRequest && (
                 <ActionButtons
                   disabled={disabled}
                   isResponding={isResponding}
@@ -356,6 +501,16 @@ const PendingApprovalEntry = ({
                 onCancel={handleCancelDeny}
                 onSubmit={handleSubmitDeny}
                 projectId={projectId}
+              />
+            )}
+
+            {isQuestionRequest && !hasResponded && (
+              <QuestionAnswerForm
+                questions={questionDefinitions}
+                answers={questionAnswers}
+                isResponding={isResponding}
+                onChange={setQuestionAnswer}
+                onSubmit={handleSubmitAnswers}
               />
             )}
           </TooltipProvider>

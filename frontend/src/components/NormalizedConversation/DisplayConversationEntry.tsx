@@ -759,6 +759,7 @@ function DisplayConversationEntry({
     if (isPendingApprovalStatus(status)) {
       return (
         <PendingApprovalEntry
+          entry={entry}
           pendingStatus={status}
           executionProcessId={executionProcessId}
         >

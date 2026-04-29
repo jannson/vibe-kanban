@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use workspace_utils::approvals::ApprovalStatus;
+use workspace_utils::approvals::{ApprovalStatus, QuestionStatus};
 
 /// Errors emitted by executor approval services.
 #[derive(Debug, Error)]
@@ -15,6 +15,8 @@ pub enum ExecutorApprovalError {
     RequestFailed(String),
     #[error("executor approval service unavailable")]
     ServiceUnavailable,
+    #[error("executor approval request cancelled")]
+    Cancelled,
 }
 
 impl ExecutorApprovalError {
@@ -33,6 +35,14 @@ pub trait ExecutorApprovalService: Send + Sync {
         tool_input: Value,
         tool_call_id: &str,
     ) -> Result<ApprovalStatus, ExecutorApprovalError>;
+
+    /// Requests answers for one or more executor questions and waits for the final response.
+    async fn request_question_answer(
+        &self,
+        tool_name: &str,
+        question_count: usize,
+        tool_call_id: &str,
+    ) -> Result<QuestionStatus, ExecutorApprovalError>;
 }
 
 #[derive(Debug, Default)]
@@ -47,6 +57,15 @@ impl ExecutorApprovalService for NoopExecutorApprovalService {
         _tool_call_id: &str,
     ) -> Result<ApprovalStatus, ExecutorApprovalError> {
         Ok(ApprovalStatus::Approved)
+    }
+
+    async fn request_question_answer(
+        &self,
+        _tool_name: &str,
+        _question_count: usize,
+        _tool_call_id: &str,
+    ) -> Result<QuestionStatus, ExecutorApprovalError> {
+        Err(ExecutorApprovalError::ServiceUnavailable)
     }
 }
 
