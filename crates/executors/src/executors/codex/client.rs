@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io,
     sync::{Arc, OnceLock},
 };
@@ -11,10 +11,10 @@ use codex_app_server_protocol::{
     DynamicToolCallResponse, FileChangeApprovalDecision, FileChangeRequestApprovalResponse,
     GetAccountParams, GetAccountResponse, InitializeCapabilities, InitializeParams,
     InitializeResponse, JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
-    RequestId, ServerRequest, ThreadForkParams, ThreadForkResponse, ThreadStartParams,
-    ThreadStartResponse, ToolRequestUserInputAnswer, ToolRequestUserInputQuestion,
-    ToolRequestUserInputResponse, TurnCompletedNotification, TurnStartParams, TurnStartResponse,
-    TurnStatus, UserInput,
+    RequestId, ServerRequest, ThreadForkParams, ThreadForkResponse,
+    ThreadStartParams, ThreadStartResponse, ToolRequestUserInputAnswer,
+    ToolRequestUserInputQuestion, ToolRequestUserInputResponse, TurnCompletedNotification,
+    TurnStartedNotification, TurnStartParams, TurnStartResponse, TurnStatus, UserInput,
 };
 use codex_protocol::config_types::{CollaborationMode, ModeKind, Settings};
 use serde::{Serialize, de::DeserializeOwned};
@@ -39,6 +39,9 @@ pub struct AppServerClient {
     log_writer: LogWriter,
     approvals: Option<Arc<dyn ExecutorApprovalService>>,
     thread_id: Mutex<Option<String>>,
+    root_turn_id: Mutex<Option<String>>,
+    root_turn_completed: Mutex<bool>,
+    active_turn_ids: Mutex<HashSet<String>>,
     pending_feedback: Mutex<VecDeque<String>>,
     auto_approve: bool,
     plan_mode: bool,
@@ -59,6 +62,9 @@ impl AppServerClient {
             auto_approve,
             plan_mode,
             thread_id: Mutex::new(None),
+            root_turn_id: Mutex::new(None),
+            root_turn_completed: Mutex::new(false),
+            active_turn_ids: Mutex::new(HashSet::new()),
             pending_feedback: Mutex::new(VecDeque::new()),
             resolved_model: OnceLock::new(),
         })
@@ -328,10 +334,27 @@ impl AppServerClient {
             .await?)
     }
 
-    pub async fn register_session(&self, thread_id: &str) -> Result<(), ExecutorError> {
+    pub async fn register_session(
+        &self,
+        thread_id: &str,
+        root_turn_id: &str,
+    ) -> Result<(), ExecutorError> {
         {
             let mut guard = self.thread_id.lock().await;
             guard.replace(thread_id.to_string());
+        }
+        {
+            let mut guard = self.root_turn_id.lock().await;
+            guard.replace(root_turn_id.to_string());
+        }
+        {
+            let mut guard = self.root_turn_completed.lock().await;
+            *guard = false;
+        }
+        {
+            let mut active_turn_ids = self.active_turn_ids.lock().await;
+            active_turn_ids.clear();
+            active_turn_ids.insert(root_turn_id.to_string());
         }
         self.flush_pending_feedback().await;
         Ok(())
@@ -461,6 +484,30 @@ impl AppServerClient {
             }
         });
     }
+
+    async fn track_turn_started(&self, turn_id: String) {
+        self.active_turn_ids.lock().await.insert(turn_id);
+    }
+
+    async fn evaluate_turn_completion(&self, completed: TurnCompletedNotification) -> bool {
+        let is_root_turn = self
+            .root_turn_id
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|turn_id| *turn_id == completed.turn.id);
+        let is_terminal = !matches!(completed.turn.status, TurnStatus::Interrupted);
+
+        let mut root_turn_completed = self.root_turn_completed.lock().await;
+        let mut active_turn_ids = self.active_turn_ids.lock().await;
+        active_turn_ids.remove(&completed.turn.id);
+
+        if is_root_turn && is_terminal {
+            *root_turn_completed = true;
+        }
+
+        *root_turn_completed && active_turn_ids.is_empty()
+    }
 }
 
 #[async_trait]
@@ -511,16 +558,36 @@ impl JsonRpcCallbacks for AppServerClient {
     ) -> Result<bool, ExecutorError> {
         self.log_writer.log_raw(raw).await?;
 
-        if notification.method == "turn/completed" {
+        if notification.method == "turn/started" {
             if let Some(params) = notification.params
-                && let Ok(completed) = serde_json::from_value::<TurnCompletedNotification>(params)
-                && completed.turn.status == TurnStatus::Interrupted
+                && let Ok(started) = serde_json::from_value::<TurnStartedNotification>(params)
             {
+                self.track_turn_started(started.turn.id).await;
+            }
+
+            return Ok(false);
+        }
+
+        if notification.method == "turn/completed" {
+            let Some(params) = notification.params else {
+                return Ok(false);
+            };
+
+            let completed = match serde_json::from_value::<TurnCompletedNotification>(params) {
+                Ok(completed) => completed,
+                Err(_) => {
+                    return Ok(false);
+                }
+            };
+            let is_interrupted = completed.turn.status == TurnStatus::Interrupted;
+            let should_finish = self.evaluate_turn_completion(completed).await;
+
+            if is_interrupted {
                 self.flush_pending_feedback().await;
                 return Ok(false);
             }
 
-            return Ok(true);
+            return Ok(should_finish);
         }
 
         Ok(false)
@@ -530,6 +597,7 @@ impl JsonRpcCallbacks for AppServerClient {
         self.log_writer.log_raw(raw).await?;
         Ok(())
     }
+
 }
 
 async fn send_server_response<T>(
@@ -623,7 +691,9 @@ impl LogWriter {
 mod tests {
     use std::collections::HashMap;
 
-    use codex_app_server_protocol::ToolRequestUserInputQuestion;
+    use codex_app_server_protocol::{
+        ToolRequestUserInputQuestion, TurnCompletedNotification, TurnStatus,
+    };
     use codex_protocol::config_types::ModeKind;
     use tokio::io::sink;
 
@@ -632,6 +702,97 @@ mod tests {
     use super::{
         AppServerClient, LogWriter, answers_to_codex_format, question_request_error_message,
     };
+
+    fn completed_notification(turn_id: &str, status: TurnStatus) -> TurnCompletedNotification {
+        serde_json::from_value(serde_json::json!({
+            "threadId": "thread-1",
+            "turn": {
+                "id": turn_id,
+                "items": [],
+                "status": status,
+                "error": null,
+                "completed_at": null,
+                "duration_ms": null,
+                "started_at": null,
+            },
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn turn_started_and_completed_only_finishes_root_when_no_other_turns_running() {
+        let client = AppServerClient::new(LogWriter::new(sink()), None, false, false);
+        client
+            .register_session("thread-1", "root-turn")
+            .await
+            .expect("session should register");
+
+        // Sub-turn completion alone should not finish the task.
+        client.track_turn_started("sub-turn-1".to_string()).await;
+        let should_finish_sub = client
+            .evaluate_turn_completion(completed_notification("sub-turn-1", TurnStatus::Completed))
+            .await;
+        assert!(!should_finish_sub);
+
+        // Root turn completion should still wait until the root is the last active turn.
+        let should_finish_root = client
+            .evaluate_turn_completion(completed_notification("root-turn", TurnStatus::Completed))
+            .await;
+        assert!(should_finish_root);
+    }
+
+    #[tokio::test]
+    async fn root_turn_completion_finishes_without_children() {
+        let client = AppServerClient::new(LogWriter::new(sink()), None, false, false);
+        client
+            .register_session("thread-1", "root-turn-2")
+            .await
+            .expect("session should register");
+
+        let should_finish = client
+            .evaluate_turn_completion(completed_notification("root-turn-2", TurnStatus::Completed))
+            .await;
+
+        assert!(should_finish);
+    }
+
+    #[tokio::test]
+    async fn root_turn_completion_before_child_then_children_finish_still_ends() {
+        let client = AppServerClient::new(LogWriter::new(sink()), None, false, false);
+        client
+            .register_session("thread-1", "root-turn-4")
+            .await
+            .expect("session should register");
+
+        client.track_turn_started("sub-turn-4".to_string()).await;
+
+        // Root turn completes first while child is still active, so session should keep running.
+        let should_not_finish_root_first = client
+            .evaluate_turn_completion(completed_notification("root-turn-4", TurnStatus::Completed))
+            .await;
+        assert!(!should_not_finish_root_first);
+
+        // After the child finishes, there are no active turns and root was already completed.
+        let should_finish_after_child_done = client
+            .evaluate_turn_completion(completed_notification("sub-turn-4", TurnStatus::Completed))
+            .await;
+        assert!(should_finish_after_child_done);
+    }
+
+    #[tokio::test]
+    async fn turn_completed_with_different_root_turn_keeps_session_running() {
+        let client = AppServerClient::new(LogWriter::new(sink()), None, false, false);
+        client
+            .register_session("thread-1", "root-turn-3")
+            .await
+            .expect("session should register");
+
+        let should_finish = client
+            .evaluate_turn_completion(completed_notification("other-root-turn", TurnStatus::Completed))
+            .await;
+
+        assert!(!should_finish);
+    }
 
     #[test]
     fn answers_to_codex_format_maps_question_texts_to_ids() {

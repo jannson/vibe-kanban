@@ -502,17 +502,20 @@ impl Codex {
             }
         };
         client.set_resolved_model(resolved_model);
-        client.register_session(&thread_id).await?;
         let collaboration_mode = client.initial_collaboration_mode()?;
-        client
+        let turn_start_response = client
             .turn_start_with_mode(
-                thread_id,
+                thread_id.clone(),
                 vec![UserInput::Text {
                     text: combined_prompt,
                     text_elements: vec![],
                 }],
                 Some(collaboration_mode),
             )
+            .await?;
+
+        client
+            .register_session(&thread_id, &turn_start_response.turn.id)
             .await?;
         Ok(())
     }
